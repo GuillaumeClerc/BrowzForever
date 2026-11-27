@@ -156,8 +156,29 @@ function Talents.Read()
   local key = treeID .. "-" .. (spec.id or 0) .. "-" .. checksum(shape)
   local import = importOf(configID)
   local loadout = info.name and info.name ~= "" and cleanName(info.name) or ""
-  -- configurations enregistrées de la spécialisation (autres « arbres » du joueur), 6 au plus
   local saved, nSaved = {}, 0
+  -- double spécialisation (onglets Principale / Secondaire) : l'autre jeu de talents
+  local SI = C_SpecializationInfo
+  local groups = (SI and SI.GetNumSpecGroups and SI.GetNumSpecGroups()) or (GetNumSpecGroups and GetNumSpecGroups()) or 1
+  if groups > 1 and SI and SI.GetCombatConfigIDForSpecGroup then
+    local active = (SI.GetActiveSpecGroup and SI.GetActiveSpecGroup()) or 1
+    local GROUP_NAMES = { "Principale", "Secondaire" }
+    loadout = GROUP_NAMES[active] or loadout
+    for g = 1, groups do
+      if g ~= active then
+        local okc, cid = pcall(SI.GetCombatConfigIDForSpecGroup, g)
+        if okc and cid then
+          local ok, list = pcall(chosenOf, cid, visible)
+          if ok then
+            local imp = importOf(cid)
+            nSaved = nSaved + 1
+            saved[nSaved] = table.concat({ GROUP_NAMES[g] or ("Spé " .. g), table.concat(list, ":"), imp, 0, tfLink(imp) }, "@")
+          end
+        end
+      end
+    end
+  end
+  -- configurations enregistrées de la spécialisation (autres « arbres » du joueur), 6 au plus
   if spec.id and C_ClassTalents.GetConfigIDsBySpecID then
     local last = C_ClassTalents.GetLastSelectedSavedConfigID and C_ClassTalents.GetLastSelectedSavedConfigID(spec.id)
     for _, cid in ipairs(C_ClassTalents.GetConfigIDsBySpecID(spec.id) or {}) do
@@ -258,7 +279,7 @@ BF.commands["testtalents"] = function()
     :format(t.key, t.nodes, nChosen, t.points, #t.layout, #(import or "")))
   local tf = select(5, strsplit("@", t.card))
   BF.Print("Lien Talents Forever : " .. ((tf and tf ~= "") and ("talentsforever.com/" .. tf) or "aucun (addon Talents Forever absent ?)"))
-  BF.Print(("Configurations enregistrées : %d"):format(t.nSaved))
+  BF.Print(("Autres arbres (2e spé + configurations enregistrées) : %d"):format(t.nSaved))
   for entry in (t.saved or ""):gmatch("[^!]+") do
     local name, list, imp, sel = strsplit("@", entry)
     local n = 0
