@@ -23,7 +23,7 @@ from discord import app_commands
 from discord.ext import tasks
 
 from browz_core import CATS, Store, money
-from browz_grid import ensure_icons, render_tab
+from browz_grid import ensure_icons, render_paperdoll, render_tab
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config_bot.json")
@@ -709,8 +709,34 @@ class InspectView(discord.ui.View):
 
     def _go(self, name, key):
         async def cb(interaction):
-            await interaction.response.edit_message(embed=inspect_embed(name, key), view=InspectView(name, key))
+            await interaction.response.defer()
+            e, files = await inspect_message(name, key)
+            await interaction.edit_original_response(embed=e, attachments=files, view=InspectView(name, key))
         return cb
+
+
+async def inspect_message(name, page):
+    """Embed de la page + image de l'équipement (façon fenêtre de personnage) quand c'est possible."""
+    e = inspect_embed(name, page)
+    c = char_data(name)
+    if page != "equipement" or not c or not c.get("gear"):
+        return e, []
+    gear = c["gear"] if isinstance(c["gear"], list) else c["gear"].get("items", [])
+    ids = sorted({str(g["id"]) for g in gear})
+    try:
+        paths = await ensure_icons(ids) if ids else {}
+        spec = c.get("spec")
+        role = {"TANK": "Tank", "HEALER": "Soigneur", "DAMAGER": "DPS"}.get(c.get("role"))   # sans emoji (police de l'image)
+        spec_label = " · ".join(x for x in (spec, role) if x)
+        card = dict(c, gear=gear, name=c.get("name") or name)
+        buf = await asyncio.get_running_loop().run_in_executor(None, lambda: render_paperdoll(
+            card, lambda i: store.item(i), paths, CLASSES.get(c.get("class"), c.get("class")), spec_label))
+    except Exception as err:
+        print("Image d'équipement impossible :", err, flush=True)
+        return e, []
+    e.description, e._fields = None, []          # la liste devient inutile : tout est sur l'image
+    e.set_image(url="attachment://equipement.png")
+    return e, [discord.File(buf, filename="equipement.png")]
 
 
 async def inspect_autocomplete(interaction: discord.Interaction, current: str):
@@ -723,7 +749,8 @@ async def inspect_autocomplete(interaction: discord.Interaction, current: str):
 @app_commands.describe(nom="Nom du personnage")
 @app_commands.autocomplete(nom=inspect_autocomplete)
 async def cmd_inspect(interaction: discord.Interaction, nom: str):
-    await interaction.response.send_message(embed=inspect_embed(nom, "fiche"), view=InspectView(nom, "fiche"))
+    e, files = await inspect_message(nom, "fiche")
+    await interaction.response.send_message(embed=e, view=InspectView(nom, "fiche"))
 
 
 async def metier_autocomplete(interaction: discord.Interaction, current: str):

@@ -155,9 +155,29 @@ class Store:
         self.d["log_money"] = self.d["log_money"][-5000:]
         return new_items, new_money, first
 
-    def uncovered(self, new_items, new_money):
+    @staticmethod
+    def _log_key(who, what, n, t, bucket_shift=0):
+        return "%s|%s|%s|%d" % (who, what, n, int(t // HOUR) + bucket_shift)
+
+    def _already_posted(self, who, what, n, t):
+        """L'heure d'une ligne du journal n'est connue qu'à l'heure près : on tolère ±1 h."""
+        posted = self.d.setdefault("posted_log", {})
+        return any(self._log_key(who, what, n, t, k) in posted for k in (-1, 0, 1))
+
+    def _mark_posted(self, who, what, n, t):
+        posted = self.d.setdefault("posted_log", {})
+        posted[self._log_key(who, what, n, t)] = int(t)
+        if len(posted) > 3000:   # ménage : on garde les plus récents
+            for k, _ in sorted(posted.items(), key=lambda x: x[1])[:len(posted) - 3000]:
+                del posted[k]
+
+    def uncovered(self, new_items, new_money, now=None, max_age=24 * HOUR):
         """Lignes du journal qui ne correspondent à aucun passage déjà publié (membres sans l'addon).
-        Regroupées par personnage : {who: {"items": {id: delta}, "money": delta, "t": heure≈}}."""
+        Regroupées par personnage : {who: {"items": {id: delta}, "money": delta, "t": heure≈}}.
+        Jamais de carte pour une ligne de plus de 24 h ni pour une ligne déjà publiée."""
+        now = now or int(time.time())
+        new_items = [e for e in new_items if e["t"] >= now - max_age]
+        new_money = [e for e in new_money if e["t"] >= now - max_age]
         events = list(self.d["events"].values())
 
         def covered(who, t, check):
@@ -174,6 +194,9 @@ class Store:
             iid = str(e["id"])
             if covered(e["who"], e["t"], lambda ev: (ev.get("items", {}).get(iid, 0) * d) > 0):
                 continue
+            if self._already_posted(e["who"], "i" + iid, d, e["t"]):
+                continue
+            self._mark_posted(e["who"], "i" + iid, d, e["t"])
             g = groups.setdefault(e["who"], {"items": {}, "money": 0, "t": e["t"]})
             g["items"][iid] = g["items"].get(iid, 0) + d
             g["t"] = max(g["t"], e["t"])
@@ -182,6 +205,9 @@ class Store:
             d = sign * int(e["amount"] or 0)
             if covered(e["who"], e["t"], lambda ev: (ev.get("money", 0) * d) > 0):
                 continue
+            if self._already_posted(e["who"], "or", d, e["t"]):
+                continue
+            self._mark_posted(e["who"], "or", d, e["t"])
             g = groups.setdefault(e["who"], {"items": {}, "money": 0, "t": e["t"]})
             g["money"] += d
             g["t"] = max(g["t"], e["t"])

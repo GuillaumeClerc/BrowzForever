@@ -27,8 +27,13 @@ TOOLTIP_URLS = [
 ICON_URL = "https://wow.zamimg.com/images/wow/icons/large/{name}.jpg"
 
 
+FONT_DIR = os.path.join(HERE, "polices")
+
+
 def _font(size, bold=True):
-    for name in (("arialbd.ttf", "DejaVuSans-Bold.ttf") if bold else ("arial.ttf", "DejaVuSans.ttf")):
+    """Police livrée avec le bot (accents garantis, même sur l'hébergeur), sinon celles du système."""
+    local = os.path.join(FONT_DIR, "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf")
+    for name in ((local, "arialbd.ttf", "DejaVuSans-Bold.ttf") if bold else (local, "arial.ttf", "DejaVuSans.ttf")):
         try:
             return ImageFont.truetype(name, size)
         except OSError:
@@ -153,6 +158,108 @@ def render_tab(tab, quality_of, icon_paths, title):
             for ox, oy in ((-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, 1), (-1, 1), (1, -1)):
                 d.text((tx + ox, ty + oy), txt, font=count_font, fill=(0, 0, 0))
             d.text((tx, ty), txt, font=count_font, fill=(255, 255, 255))
+    buf = io.BytesIO()
+    img.save(buf, "PNG", optimize=True)
+    buf.seek(0)
+    return buf
+
+
+# ------------------------------------------------------------------ fenêtre de personnage (équipement)
+LEFT_SLOTS = [1, 2, 3, 15, 5, 9]           # tête, cou, épaules, dos, torse, poignets
+RIGHT_SLOTS = [10, 6, 7, 8, 11, 12, 13, 14] # mains, taille, jambes, pieds, doigts, bijoux
+BOTTOM_SLOTS = [16, 17, 18]                 # main droite, main gauche, à distance
+CLASS_RGB = {"WARRIOR": (198, 155, 109), "PALADIN": (244, 140, 186), "HUNTER": (170, 211, 114), "ROGUE": (255, 244, 104),
+             "PRIEST": (255, 255, 255), "SHAMAN": (0, 112, 221), "MAGE": (63, 199, 235), "WARLOCK": (135, 136, 238),
+             "DRUID": (255, 124, 10)}
+PD_ICON, PD_ROW, PD_W, PD_H = 40, 50, 820, 520
+
+
+def _fit(d, text, font, width):
+    """Coupe un texte trop long avec « … »."""
+    if d.textlength(text, font=font) <= width:
+        return text
+    while text and d.textlength(text + "…", font=font) > width:
+        text = text[:-1]
+    return text + "…"
+
+
+def render_paperdoll(card, item_of, icon_paths, class_label, spec_label):
+    """card = fiche (gear : [{slot, id}]) ; item_of(id) -> {"n", "q"} ; icon_paths : {id: fichier}."""
+    img = Image.new("RGB", (PD_W, PD_H), (20, 18, 16))
+    d = ImageDraw.Draw(img)
+    d.rectangle([0, 0, PD_W - 1, PD_H - 1], outline=(70, 60, 45), width=2)
+    gear = {g["slot"]: g["id"] for g in card.get("gear") or []}
+    name_font, small = _font(13), _font(11, bold=False)
+    cache = {}
+
+    def icon(x, y, slot):
+        d.rectangle([x, y, x + PD_ICON - 1, y + PD_ICON - 1], fill=(12, 11, 10), outline=(60, 56, 50))
+        iid = gear.get(slot)
+        if not iid:
+            return None
+        path = icon_paths.get(str(iid))
+        if path:
+            if path not in cache:
+                try:
+                    cache[path] = Image.open(path).convert("RGB").resize((PD_ICON - 4, PD_ICON - 4))
+                except OSError:
+                    cache[path] = None
+            if cache[path]:
+                img.paste(cache[path], (x + 2, y + 2))
+        if not path or not cache.get(path):
+            d.text((x + PD_ICON // 2 - 6, y + 8), "?", font=_font(22), fill=(255, 209, 0))
+        it = item_of(iid) or {}
+        q = it.get("q")
+        if q is not None and q >= 2:
+            d.rectangle([x, y, x + PD_ICON - 1, y + PD_ICON - 1], outline=QUALITY_RGB.get(q, (200, 200, 200)), width=2)
+        return it
+
+    def label(x, y, it, slot, align_right=False, width=250, center=False):
+        from_slot = {1: "Tête", 2: "Cou", 3: "Épaules", 15: "Dos", 5: "Torse", 9: "Poignets", 10: "Mains", 6: "Taille",
+                     7: "Jambes", 8: "Pieds", 11: "Doigt", 12: "Doigt", 13: "Bijou", 14: "Bijou", 16: "Main droite",
+                     17: "Main gauche", 18: "À distance"}[slot]
+        if it is None:
+            lines = [("— " + from_slot, small, (110, 105, 95))]
+        else:
+            color = QUALITY_RGB.get(it.get("q"), (230, 230, 230)) if it.get("q") is not None else (230, 230, 230)
+            lines = [(_fit(d, it.get("n") or "Objet #%s" % gear.get(slot), name_font, width), name_font, color),
+                     (from_slot, small, (150, 145, 135))]
+        for k, (text, font, color) in enumerate(lines):
+            tw = d.textlength(text, font=font)
+            tx = x - tw if align_right else (x - tw / 2 if center else x)
+            d.text((tx, y + 4 + k * 17), text, font=font, fill=color)
+
+    top = 20
+    for k, slot in enumerate(LEFT_SLOTS):
+        y = top + k * PD_ROW
+        it = icon(16, y, slot)
+        label(16 + PD_ICON + 8, y, it, slot)
+    for k, slot in enumerate(RIGHT_SLOTS):
+        y = top + k * PD_ROW
+        it = icon(PD_W - 16 - PD_ICON, y, slot)
+        label(PD_W - 16 - PD_ICON - 8, y, it, slot, align_right=True)
+    # armes en bas, au centre
+    by = PD_H - 16 - PD_ICON - 34
+    step = 250
+    bx0 = PD_W // 2 - step - PD_ICON // 2
+    for k, slot in enumerate(BOTTOM_SLOTS):
+        x = bx0 + k * step
+        it = icon(x, by, slot)
+        label(x + PD_ICON // 2, by + PD_ICON + 2, it, slot, width=230, center=True)
+    # centre : identité du personnage
+    cx = PD_W // 2
+    big = _font(22)
+    name = card.get("name") or "?"
+    rgb = CLASS_RGB.get(card.get("class"), (255, 209, 0))
+    d.text((cx - d.textlength(name, font=big) / 2, 150), name, font=big, fill=rgb)
+    sub = "%s niveau %s" % (class_label or "?", card.get("level") or "?")
+    f2 = _font(15, bold=False)
+    d.text((cx - d.textlength(sub, font=f2) / 2, 184), sub, font=f2, fill=(220, 215, 205))
+    if spec_label:
+        d.text((cx - d.textlength(spec_label, font=f2) / 2, 208), spec_label, font=f2, fill=(220, 215, 205))
+    il = "Niveau d'objet %s" % (card.get("ilvl") or "?")
+    f3 = _font(18)
+    d.text((cx - d.textlength(il, font=f3) / 2, 250), il, font=f3, fill=(255, 209, 0))
     buf = io.BytesIO()
     img.save(buf, "PNG", optimize=True)
     buf.seek(0)
