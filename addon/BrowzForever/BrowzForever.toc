@@ -1,7 +1,8 @@
 ## Interface: 16001
 ## Title: Browz Forever
 ## Notes: Outils de la guilde Browz Forever : banque de guilde partagée (/browz bdg).
-## Author: Bellock
+## Author: Bellock (Guillaume Clerc)
+## X-Copyright: (c) 2026 Guillaume Clerc (Bellock). Tous droits réservés.
 ## Version: 0.9.0
 ## SavedVariables: BrowzForeverDB
 Core.lua

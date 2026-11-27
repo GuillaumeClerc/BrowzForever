@@ -30,3 +30,7 @@ Les membres n'en ont pas besoin.
 3. En jeu : `/browz pont on`, puis lance `Lancer.bat`.
 
 > Ne publie jamais ton `config.json` (déjà exclu par `.gitignore`).
+
+## Licence
+
+© 2026 Guillaume Clerc (Bellock). Tous droits réservés : usage personnel autorisé, redistribution et réutilisation du code interdites sans accord. Détails dans [LICENSE](LICENSE).
