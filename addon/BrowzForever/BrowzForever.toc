@@ -2,7 +2,7 @@
 ## Title: Browz Forever
 ## Notes: Outils de la guilde Browz Forever : banque de guilde partagée (/browz bdg).
 ## Author: Bellock
-## Version: 0.7.0
+## Version: 0.8.0
 ## SavedVariables: BrowzForeverDB
 Core.lua
 Sync.lua

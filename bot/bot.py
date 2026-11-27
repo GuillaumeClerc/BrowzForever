@@ -700,12 +700,23 @@ def inspect_embed(name, page):
 
 
 class InspectView(discord.ui.View):
-    def __init__(self, name, page):
+    def __init__(self, name, page, set_idx=None):
         super().__init__(timeout=900)
         for key, label in INSPECT_PAGES:
-            b = discord.ui.Button(label=label, style=discord.ButtonStyle.primary if key == page else discord.ButtonStyle.secondary)
+            b = discord.ui.Button(label=label, row=1,
+                                  style=discord.ButtonStyle.primary if key == page else discord.ButtonStyle.secondary)
             b.callback = self._go(name, key)
             self.add_item(b)
+        sets = (char_data(name) or {}).get("sets") or []
+        if page == "equipement" and sets:
+            opts = [discord.SelectOption(label="Équipement porté", value="-1", default=set_idx is None)]
+            for i, st in enumerate(sets[:24]):
+                opts.append(discord.SelectOption(label=(st.get("name") or "Ensemble %d" % (i + 1))[:100], value=str(i),
+                                                 description=("Spé : %s" % st["spec"])[:100] if st.get("spec") else None,
+                                                 default=set_idx == i))
+            sel = discord.ui.Select(placeholder="🧥 Choisir un ensemble d'équipement", options=opts, row=0)
+            sel.callback = self._set(name, sel)
+            self.add_item(sel)
 
     def _go(self, name, key):
         async def cb(interaction):
@@ -714,21 +725,38 @@ class InspectView(discord.ui.View):
             await interaction.edit_original_response(embed=e, attachments=files, view=InspectView(name, key))
         return cb
 
+    def _set(self, name, sel):
+        async def cb(interaction):
+            await interaction.response.defer()
+            idx = int(sel.values[0])
+            idx = None if idx < 0 else idx
+            e, files = await inspect_message(name, "equipement", idx)
+            await interaction.edit_original_response(embed=e, attachments=files, view=InspectView(name, "equipement", idx))
+        return cb
 
-async def inspect_message(name, page):
-    """Embed de la page + image de l'équipement (façon fenêtre de personnage) quand c'est possible."""
+
+async def inspect_message(name, page, set_idx=None):
+    """Embed de la page + image de l'équipement (façon fenêtre de personnage) quand c'est possible.
+    set_idx : ensemble d'équipement du personnage à afficher (None = ce qu'il porte)."""
     e = inspect_embed(name, page)
     c = char_data(name)
     if page != "equipement" or not c or not c.get("gear"):
         return e, []
     gear = c["gear"] if isinstance(c["gear"], list) else c["gear"].get("items", [])
+    set_label = None
+    sets = c.get("sets") or []
+    if set_idx is not None and set_idx < len(sets):
+        gear = sets[set_idx].get("items") or []
+        set_label = "Ensemble : %s" % sets[set_idx].get("name")
     ids = sorted({str(g["id"]) for g in gear})
     try:
         paths = await ensure_icons(ids) if ids else {}
         spec = c.get("spec")
         role = {"TANK": "Tank", "HEALER": "Soigneur", "DAMAGER": "DPS"}.get(c.get("role"))   # sans emoji (police de l'image)
-        spec_label = " · ".join(x for x in (spec, role) if x)
+        spec_label = set_label or " · ".join(x for x in (spec, role) if x)
         card = dict(c, gear=gear, name=c.get("name") or name)
+        if set_label:
+            card["ilvl"] = None   # le niveau d'objet moyen ne vaut que pour l'équipement porté
         buf = await asyncio.get_running_loop().run_in_executor(None, lambda: render_paperdoll(
             card, lambda i: store.item(i), paths, CLASSES.get(c.get("class"), c.get("class")), spec_label))
     except Exception as err:

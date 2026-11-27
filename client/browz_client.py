@@ -216,10 +216,21 @@ def parse_card(s):
         m = re.match(r"^(\d+),(\d+)$", entry)
         if m:
             gear.append({"slot": int(m.group(1)), "id": int(m.group(2))})
+    sets = []
+    if len(f) > 13:
+        for chunk in filter(None, f[13].split("!")):
+            parts = chunk.split("@")
+            items = []
+            for pair in filter(None, (parts[2] if len(parts) > 2 else "").split(":")):
+                m = re.match(r"^(\d+),(\d+)$", pair)
+                if m:
+                    items.append({"slot": int(m.group(1)), "id": int(m.group(2))})
+            sets.append({"name": parts[0].strip(), "spec": (parts[1].strip() or None) if len(parts) > 1 else None,
+                         "items": items})
     return {"name": f[1], "class": f[2] or None, "level": int(f[3] or 0), "rank": f[4] or None,
             "role": f[5] or None, "spec": f[6].strip() or None, "discord": f[7].strip() or None,
             "t": int(f[8] or 0), "profs": profs, "ilvl": int(f[10] or 0) or None,
-            "gear": gear, "alts": [a for a in f[12].split("&") if a]}
+            "gear": gear, "alts": [a for a in f[12].split("&") if a], "sets": sets}
 
 
 def bank_to_json(bank):

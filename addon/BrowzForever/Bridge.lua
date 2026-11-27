@@ -128,3 +128,4 @@ BF.commands["pont"] = function(arg)
     BF.Print("Pont : " .. (Bridge.IsOn() and "|cff00ff00activé|r" or "désactivé") .. " | passages en attente d'un pont : " .. pending)
   end
 end
+

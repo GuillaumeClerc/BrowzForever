@@ -2,7 +2,7 @@
 local ADDON, BF = ...
 _G.BrowzForever = BF
 
-BF.VERSION = "0.7.0"
+BF.VERSION = "0.8.0"
 BF.GUILD_NAME = "Browz Forever"   -- l'addon ne fait rien en dehors de cette guilde
 
 local function defaults()

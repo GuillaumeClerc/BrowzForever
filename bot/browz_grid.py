@@ -257,9 +257,10 @@ def render_paperdoll(card, item_of, icon_paths, class_label, spec_label):
     d.text((cx - d.textlength(sub, font=f2) / 2, 184), sub, font=f2, fill=(220, 215, 205))
     if spec_label:
         d.text((cx - d.textlength(spec_label, font=f2) / 2, 208), spec_label, font=f2, fill=(220, 215, 205))
-    il = "Niveau d'objet %s" % (card.get("ilvl") or "?")
-    f3 = _font(18)
-    d.text((cx - d.textlength(il, font=f3) / 2, 250), il, font=f3, fill=(255, 209, 0))
+    if card.get("ilvl"):
+        il = "Niveau d'objet %s" % card["ilvl"]
+        f3 = _font(18)
+        d.text((cx - d.textlength(il, font=f3) / 2, 250), il, font=f3, fill=(255, 209, 0))
     buf = io.BytesIO()
     img.save(buf, "PNG", optimize=True)
     buf.seek(0)
