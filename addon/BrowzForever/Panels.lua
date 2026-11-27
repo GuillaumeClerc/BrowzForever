@@ -230,13 +230,13 @@ BF.commands["craft"] = function() BF.OpenMain("craft") end
 BF.commands["liaison"] = function() BF.OpenMain("liaison") end
 BF.commands["aide"] = function()
   BF.Print("|cffffd100/browz|r : ouvrir/fermer la fenêtre · |cffffd100/browz bdg|r · |cffffd100/browz liaison|r · " ..
-    "|cffffd100/browz lien|r (télécharger / partager l'addon) · |cffffd100/browz pont on|off|r (ce PC envoie à Discord)")
+    "|cffffd100/browz lien|r (lien du client pont) · |cffffd100/browz pont on|off|r (ce PC envoie à Discord)")
 end
 
--- Lien de téléchargement (à copier avec Ctrl+C) -------------------------------------------------
+-- Lien du client pont (à copier avec Ctrl+C) -------------------------------------------------
 BF.DOWNLOAD_URL = "https://github.com/GuillaumeClerc/BrowzForever"
 StaticPopupDialogs["BROWZFOREVER_LIEN"] = {
-  text = "Browz Forever — lien de téléchargement\n(Ctrl+C pour copier, puis colle-le dans ton navigateur ou sur Discord)",
+  text = "Browz Forever — lien du client (pont)\nPour les officiers qui envoient la banque sur Discord.\n(Ctrl+C pour copier, puis colle-le dans ton navigateur)",
   button1 = CLOSE or "Fermer",
   hasEditBox = true, editBoxWidth = 320,
   OnShow = function(self)
@@ -252,12 +252,12 @@ BF.commands["lien"] = BF.ShowLink
 
 local linkBtn = CreateFrame("Button", nil, liaison, "UIPanelButtonTemplate")
 linkBtn:SetSize(150, 22); linkBtn:SetPoint("BOTTOMRIGHT", -16, 14)
-linkBtn:SetText("Lien de l'addon")
+linkBtn:SetText("Lien du client")
 linkBtn:SetScript("OnClick", BF.ShowLink)
 linkBtn:SetScript("OnEnter", function(self)
   GameTooltip:SetOwner(self, "ANCHOR_TOP")
-  GameTooltip:SetText("Télécharger / partager Browz Forever")
-  GameTooltip:AddLine("Affiche le lien GitHub à copier pour un nouveau membre.", 1, 1, 1, true)
+  GameTooltip:SetText("Client Browz Forever (pont)")
+  GameTooltip:AddLine("Lien GitHub du client qui envoie la banque et les fiches sur Discord. Seuls les officiers « pont » en ont besoin.", 1, 1, 1, true)
   GameTooltip:Show()
 end)
 linkBtn:SetScript("OnLeave", GameTooltip_Hide)

@@ -300,7 +300,10 @@ class ChatTail:
     def __init__(self, path, state):
         self.path = path
         self.state = state
-        self.parts = {}   # seq -> {n, got{i: data}}
+        # morceaux en attente, gardés dans etat.json : un redémarrage du client au milieu d'un
+        # envoi ne perd plus le message (les lignes déjà lues ne sont pas relues)
+        self.parts = {tuple(k.split("|", 1)): {"n": v["n"], "got": {int(i): d for i, d in v["got"].items()}}
+                      for k, v in state.get("morceaux", {}).items()}
         self.seen = set(state.get("vus", []))
 
     def poll(self):
@@ -360,6 +363,8 @@ class ChatTail:
                     if lay:
                         out.append(("T", lay))
         self.state["vus"] = list(self.seen)[-500:]
+        self.state["morceaux"] = {"%s|%s" % k: {"n": v["n"], "got": {str(i): d for i, d in v["got"].items()}}
+                                  for k, v in list(self.parts.items())[-50:]}
         return out
 
 
@@ -538,9 +543,8 @@ def main():
                     lay = parse_layout(it.get("data", "")) if isinstance(it, dict) else None
                     if lay:
                         lays[lay["key"]] = lay
-                if lays and lays.keys() != set(state.get("arbres_envoyes", [])):
+                if lays:   # renvoyés à chaque lecture (quelques Ko) : le bot les a toujours
                     sender.push("layouts", lays)
-                    state["arbres_envoyes"] = sorted(lays)
                 roster = db.get("roster")
                 if isinstance(roster, dict) and isinstance(roster.get("members"), dict):
                     sender.push("roster", {"t": roster.get("t"), "members": roster["members"]})
