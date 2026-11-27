@@ -23,7 +23,8 @@ Pour le donner à un nouveau membre : onglet **Liaison → Lien de l'addon** (ou
 Un addon WoW ne peut pas accéder à internet. Un « pont » (PC d'un officier) fait le lien avec Discord.
 Les membres n'en ont pas besoin.
 
-1. Installe Python 3 (python.org, coche « Add to PATH »).
+1. Installe Python 3 : https://www.python.org/downloads/ (bouton jaune « Download Python »).
+   Pendant l'installation, **coche « Add python.exe to PATH »** en bas de la première fenêtre.
 2. Copie le dossier `client`, renomme `config.exemple.json` en `config.json` et remplis-le
    avec l'adresse et la clé que Bellock t'envoie en privé.
 3. En jeu : `/browz pont on`, puis lance `Lancer.bat`.
