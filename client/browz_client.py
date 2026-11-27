@@ -236,7 +236,20 @@ def parse_card(s):
             if m:
                 chosen.append([int(m.group(1)), int(m.group(2)), int(m.group(3))])
         talents = {"key": t[0], "loadout": (" ".join(t[1].split()) or None) if len(t) > 1 else None, "chosen": chosen,
-                   "import": (t[3].strip() or None) if len(t) > 3 else None}
+                   "import": (t[3].strip() or None) if len(t) > 3 else None,
+                   "tf": (t[4].strip() or None) if len(t) > 4 else None}
+        saved = []
+        for entry in filter(None, (f[15] if len(f) > 15 else "").split("!")):
+            x = entry.split("@")
+            ch = []
+            for c in filter(None, (x[1] if len(x) > 1 else "").split(":")):
+                m = re.match(r"^(\d+)\.(\d+)\.(\d+)$", c)
+                if m:
+                    ch.append([int(m.group(1)), int(m.group(2)), int(m.group(3))])
+            saved.append({"name": " ".join(x[0].split()) or "Configuration", "chosen": ch,
+                          "import": (x[2].strip() or None) if len(x) > 2 else None,
+                          "selected": len(x) > 3 and x[3] == "1", "tf": (x[4].strip() or None) if len(x) > 4 else None})
+        talents["saved"] = saved
     return {"name": f[1], "class": f[2] or None, "level": int(f[3] or 0), "rank": f[4] or None,
             "role": f[5] or None, "spec": f[6].strip() or None, "discord": f[7].strip() or None,
             "t": int(f[8] or 0), "profs": profs, "ilvl": int(f[10] or 0) or None,

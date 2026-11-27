@@ -108,7 +108,7 @@ end)
 
 local function announce() if Bridge.IsOn() then BF.Send("P", "1") end end
 BF.OnActive(function()
-  C_Timer.After(15, announce)
+  C_Timer.After(1, announce)   -- « un pont arrive » : les autres renvoient ce qui ne lui est pas parvenu
   if Bridge.IsOn() and LoggingChat and not LoggingChat() then pcall(LoggingChat, true) end
 end)
 

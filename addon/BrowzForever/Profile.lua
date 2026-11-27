@@ -76,9 +76,9 @@ function Profile.Build()
   -- spécialisation de talents et rôle
   if BF.Talents then
     local sp = BF.Talents.Spec()
-    card.spec, card.role = sp.name, sp.role
+    card.spec, card.role = sp.name, BF.Talents.Roles(sp.role)
     local ok, t = pcall(BF.Talents.Read)
-    if ok and t then card.talents, card.layout = t.card, t end
+    if ok and t then card.talents, card.layout, card.loadouts = t.card, t, t.saved end
   end
   -- équipement
   if GetAverageItemLevel then
@@ -115,7 +115,7 @@ function Profile.Serialize(c)
   end
   return table.concat({ "1", clean(c.name), c.class or "", c.level or 0, clean(c.rank), c.role or "", clean(c.spec),
     clean(c.discord), c.t or 0, table.concat(profs, ";"), c.ilvl or 0, table.concat(gear, ";"), table.concat(alts, "&"),
-    table.concat(sets, "!"), c.talents or "" }, "^")
+    table.concat(sets, "!"), c.talents or "", c.loadouts or "" }, "^")
 end
 
 function Profile.Parse(s)
@@ -145,6 +145,7 @@ function Profile.Parse(s)
     c.sets[#c.sets + 1] = st
   end
   c.talents = (f[15] and f[15] ~= "") and f[15] or nil
+  c.loadouts = (f[16] and f[16] ~= "") and f[16] or nil
   return c
 end
 
@@ -157,24 +158,52 @@ local function store(card, data)
   return true
 end
 
+-- Empreinte d'une fiche sans l'heure (champ 9) : si rien n'a changé depuis le dernier envoi confirmé
+-- par un pont, la connexion n'envoie rien (aucun chuchotement, aucun message d'addon).
+local function cardHash(data)
+  local f = { strsplit("^", data) }
+  f[9] = ""
+  return BF.Talents.Checksum(table.concat(f, "^"))
+end
+
+local function ackTable()
+  BrowzForeverDB.cardAck = BrowzForeverDB.cardAck or {}
+  return BrowzForeverDB.cardAck
+end
+
+-- mode : true = toujours envoyer (un pont arrive, pseudo Discord enregistré) ;
+--        "login" = à la connexion, seulement si la fiche a changé ;
+--        false/nil = après un changement en jeu (au plus une fois toutes les 5 min), seulement si elle a changé.
 local lastSent = 0
-function Profile.Publish(force)
+function Profile.Publish(mode)
   if not BF.active then return end
-  if not force and GetServerTime() - lastSent < 300 then return end -- au plus une fois toutes les 5 min
+  if not mode and GetServerTime() - lastSent < 300 then return end
   local card = Profile.Build()
   if not card then return end
-  lastSent = GetServerTime()
   local data = Profile.Serialize(card)
+  local hash = cardHash(data)
+  if card.layout and BF.Talents then BF.Talents.PublishLayout(card.layout) end
+  if mode ~= true and ackTable()[card.name] == hash then return end   -- rien de neuf, déjà chez le bot
+  lastSent = GetServerTime()
   store(card, data)
   BF.Send("C", data)
-  if BF.Bridge.IsOn() then BF.Bridge.Emit("C", data) end
-  if card.layout and BF.Talents then BF.Talents.PublishLayout(card.layout) end
+  if BF.Bridge.IsOn() then
+    BF.Bridge.Emit("C", data)
+    ackTable()[card.name] = hash
+  end
 end
 
 BF.OnMessage("C", function(data)
   local card = Profile.Parse(data)
   if not card or not card.name then return end
+  if BF.Bridge.IsOn() then BF.Send("K", card.name .. "#" .. cardHash(data)) end   -- accusé pour l'envoyeur
   if store(card, data) and BF.Bridge.IsOn() then BF.Bridge.Emit("C", data) end
+end)
+
+-- Accusé d'un pont : notre fiche est arrivée, inutile de la renvoyer tant qu'elle ne change pas
+BF.OnMessage("K", function(msg)
+  local name, hash = msg:match("^(.+)#(%x+)$")
+  if name and name == BF.MyName() then ackTable()[name] = hash end
 end)
 
 -- Un pont arrive : on lui renvoie notre fiche
@@ -191,9 +220,48 @@ end
 local ev = CreateFrame("Frame")
 for _, e in ipairs({ "SKILL_LINES_CHANGED", "PLAYER_LEVEL_UP", "PLAYER_EQUIPMENT_CHANGED",
   "PLAYER_SPECIALIZATION_CHANGED", "ACTIVE_TALENT_GROUP_CHANGED", "EQUIPMENT_SETS_CHANGED",
-  "CHARACTER_POINTS_CHANGED", "TRAIT_CONFIG_UPDATED" }) do pcall(ev.RegisterEvent, ev, e) end
+  "CHARACTER_POINTS_CHANGED", "TRAIT_CONFIG_UPDATED", "TRAIT_CONFIG_LIST_UPDATED", "LFG_ROLE_UPDATE",
+  "PLAYER_ROLES_ASSIGNED" }) do pcall(ev.RegisterEvent, ev, e) end
 ev:SetScript("OnEvent", function() if BF.active then soon() end end)
-BF.OnActive(function() C_Timer.After(12, function() Profile.Publish(true) end) end)
+-- À la connexion : on attend que le jeu ait fini de charger ce que contient la fiche (nom complet,
+-- talents, équipement) au lieu d'un délai fixe. Vérifié à chaque événement utile, et au plus tard
+-- après 20 s (personnage sans talents, par exemple) on envoie ce qu'on a.
+local function ready()
+  if not BF.fullName then return false end
+  local ok, t = pcall(BF.Talents.Read)
+  if not (ok and t) then return false end
+  local _, equipped = GetAverageItemLevel and GetAverageItemLevel()
+  return (equipped or 0) > 0
+end
+
+local waiting
+local function whenReady(fn)
+  if waiting then return end
+  local start, done = GetTime(), false
+  local w = CreateFrame("Frame")
+  waiting = w
+  local function try()
+    if done then return end
+    if ready() or GetTime() - start > 20 then
+      done = true
+      w:UnregisterAllEvents(); w:SetScript("OnUpdate", nil); waiting = nil
+      fn()
+    end
+  end
+  for _, e in ipairs({ "TRAIT_CONFIG_UPDATED", "TRAIT_TREE_CHANGED", "PLAYER_TALENT_UPDATE", "SPELLS_CHANGED",
+    "PLAYER_EQUIPMENT_CHANGED", "SKILL_LINES_CHANGED", "GUILD_ROSTER_UPDATE", "PLAYER_ENTERING_WORLD" }) do
+    pcall(w.RegisterEvent, w, e)
+  end
+  w:SetScript("OnEvent", try)
+  local acc = 0
+  w:SetScript("OnUpdate", function(_, dt)   -- filet : un coup d'œil toutes les 0,5 s
+    acc = acc + dt
+    if acc >= 0.5 then acc = 0; try() end
+  end)
+  try()
+end
+
+BF.OnActive(function() whenReady(function() Profile.Publish("login") end) end)
 
 -- Liste de guilde (ponts seulement, enregistrée dans les SavedVariables) -------------------------
 local function seenText(i)
