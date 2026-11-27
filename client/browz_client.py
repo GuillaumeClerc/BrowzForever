@@ -227,10 +227,43 @@ def parse_card(s):
                     items.append({"slot": int(m.group(1)), "id": int(m.group(2))})
             sets.append({"name": parts[0].strip(), "spec": (parts[1].strip() or None) if len(parts) > 1 else None,
                          "items": items})
+    talents = None
+    if len(f) > 14 and f[14].strip():
+        t = f[14].split("@")
+        chosen = []
+        for entry in filter(None, (t[2] if len(t) > 2 else "").split(":")):
+            m = re.match(r"^(\d+)\.(\d+)\.(\d+)$", entry)
+            if m:
+                chosen.append([int(m.group(1)), int(m.group(2)), int(m.group(3))])
+        talents = {"key": t[0], "loadout": (" ".join(t[1].split()) or None) if len(t) > 1 else None, "chosen": chosen,
+                   "import": (t[3].strip() or None) if len(t) > 3 else None}
     return {"name": f[1], "class": f[2] or None, "level": int(f[3] or 0), "rank": f[4] or None,
             "role": f[5] or None, "spec": f[6].strip() or None, "discord": f[7].strip() or None,
             "t": int(f[8] or 0), "profs": profs, "ilvl": int(f[10] or 0) or None,
-            "gear": gear, "alts": [a for a in f[12].split("&") if a], "sets": sets}
+            "gear": gear, "alts": [a for a in f[12].split("&") if a], "sets": sets, "talents": talents}
+
+
+def parse_layout(s):
+    """Forme d'un arbre de talents : 1^clé^spé^nœud;nœud… (nœud = id,x,y,max,type,liens/…,sort[p]/…)"""
+    f = s.split("^")
+    if len(f) < 4 or f[0] != "1":
+        return None
+    nodes = []
+    for entry in filter(None, f[3].split(";")):
+        p = entry.split(",")
+        if len(p) < 7:
+            continue
+        try:
+            spells = []
+            for sp in filter(None, p[6].split("/")):
+                spells.append([int(sp.rstrip("p")), sp.endswith("p")])
+            nodes.append({"id": int(p[0]), "x": int(p[1]), "y": int(p[2]), "max": int(p[3] or 1), "type": int(p[4] or 0),
+                          "edges": [int(e) for e in p[5].split("/") if e], "spells": spells})
+        except ValueError:
+            continue
+    if not nodes:
+        return None
+    return {"key": f[1], "spec": int(f[2] or 0), "nodes": nodes}
 
 
 def bank_to_json(bank):
@@ -322,6 +355,10 @@ class ChatTail:
                     card = parse_card(full)
                     if card:
                         out.append(("C", card))
+                elif kind == "T":
+                    lay = parse_layout(full)
+                    if lay:
+                        out.append(("T", lay))
         self.state["vus"] = list(self.seen)[-500:]
         return out
 
@@ -354,6 +391,9 @@ class Sender:
                             c["name"], c.get("class"), c.get("level"),
                             ", ".join("%s %s%s" % (x["n"], x["lvl"], " (" + x["spe"] + ")" if x.get("spe") else "") for x in c["profs"]),
                             c.get("discord")))
+                elif p["kind"] == "layouts":
+                    for lay in pl.values():
+                        log("[TEST] arbre de talents %s : %d talents" % (lay["key"], len(lay["nodes"])))
                 elif p["kind"] == "roster":
                     log("[TEST] liste de guilde : %d membres" % len(pl["members"]))
                 elif p["kind"] == "items":
@@ -467,6 +507,9 @@ def main():
         cards = {x["name"]: x for k, x in found if k == "C"}
         if cards:
             sender.push("chars", cards)
+        lays = {x["key"]: x for k, x in found if k == "T"}
+        if lays:
+            sender.push("layouts", lays)
         # 2) SavedVariables (après /reload, déconnexion ou sortie du jeu)
         sv_path = sv_path or find_savedvars(wow)
         if sv_path and os.path.getmtime(sv_path) > sv_mtime:
@@ -490,6 +533,14 @@ def main():
                         cards[card["name"]] = card
                 if cards:
                     sender.push("chars", cards)
+                lays = {}
+                for _, it in (db.get("layouts") or {}).items():
+                    lay = parse_layout(it.get("data", "")) if isinstance(it, dict) else None
+                    if lay:
+                        lays[lay["key"]] = lay
+                if lays and lays.keys() != set(state.get("arbres_envoyes", [])):
+                    sender.push("layouts", lays)
+                    state["arbres_envoyes"] = sorted(lays)
                 roster = db.get("roster")
                 if isinstance(roster, dict) and isinstance(roster.get("members"), dict):
                     sender.push("roster", {"t": roster.get("t"), "members": roster["members"]})

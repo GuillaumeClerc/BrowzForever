@@ -11,3 +11,6 @@ __pycache__/
 *.pyc
 *.7z
 *.zip
+
+# le bot reste privé (dossier Documents\BrowzBot + Wispbyte)
+bot/

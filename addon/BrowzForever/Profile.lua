@@ -40,9 +40,8 @@ local function readSets()
     local name = C_EquipmentSet.GetEquipmentSetInfo(setID)
     local ids = C_EquipmentSet.GetItemIDs(setID) or {}
     local spec
-    if C_EquipmentSet.GetEquipmentSetAssignedSpec and GetSpecializationInfo then
-      local specIndex = C_EquipmentSet.GetEquipmentSetAssignedSpec(setID)
-      if specIndex then spec = select(2, GetSpecializationInfo(specIndex)) end
+    if C_EquipmentSet.GetEquipmentSetAssignedSpec and BF.Talents then
+      spec = BF.Talents.SpecNameByIndex(C_EquipmentSet.GetEquipmentSetAssignedSpec(setID))
     end
     local items = {}
     for slot, id in pairs(ids) do
@@ -75,12 +74,11 @@ function Profile.Build()
     card.profs[#card.profs + 1] = { n = p.n, lvl = p.lvl, max = p.max, main = p.main, spe = spe, sl = p.sl }
   end
   -- spécialisation de talents et rôle
-  if GetSpecialization and GetSpecializationInfo then
-    local idx = GetSpecialization()
-    if idx then
-      local _, specName, _, _, role = GetSpecializationInfo(idx)
-      card.spec, card.role = specName, role
-    end
+  if BF.Talents then
+    local sp = BF.Talents.Spec()
+    card.spec, card.role = sp.name, sp.role
+    local ok, t = pcall(BF.Talents.Read)
+    if ok and t then card.talents, card.layout = t.card, t end
   end
   -- équipement
   if GetAverageItemLevel then
@@ -117,7 +115,7 @@ function Profile.Serialize(c)
   end
   return table.concat({ "1", clean(c.name), c.class or "", c.level or 0, clean(c.rank), c.role or "", clean(c.spec),
     clean(c.discord), c.t or 0, table.concat(profs, ";"), c.ilvl or 0, table.concat(gear, ";"), table.concat(alts, "&"),
-    table.concat(sets, "!") }, "^")
+    table.concat(sets, "!"), c.talents or "" }, "^")
 end
 
 function Profile.Parse(s)
@@ -146,6 +144,7 @@ function Profile.Parse(s)
     end
     c.sets[#c.sets + 1] = st
   end
+  c.talents = (f[15] and f[15] ~= "") and f[15] or nil
   return c
 end
 
@@ -169,6 +168,7 @@ function Profile.Publish(force)
   store(card, data)
   BF.Send("C", data)
   if BF.Bridge.IsOn() then BF.Bridge.Emit("C", data) end
+  if card.layout and BF.Talents then BF.Talents.PublishLayout(card.layout) end
 end
 
 BF.OnMessage("C", function(data)
@@ -232,55 +232,3 @@ C_Timer.NewTicker(600, function()
     if C_GuildInfo and C_GuildInfo.GuildRoster then C_GuildInfo.GuildRoster() elseif GuildRoster then GuildRoster() end
   end
 end)
-
-
--- Test : comment WoW Forever expose les talents (/browz testtalents) --------------------------------
-local function has(path)
-  local t = _G
-  for part in path:gmatch("[^%.]+") do
-    if type(t) ~= "table" then return false end
-    t = t[part]
-  end
-  return t ~= nil
-end
-
-BF.commands["testtalents"] = function()
-  local apis = { "GetNumTalentTabs", "GetTalentTabInfo", "GetTalentInfo", "GetNumTalents", "GetActiveTalentGroup",
-    "GetNumTalentGroups", "GetSpecialization", "GetSpecializationInfo", "GetNumSpecializations",
-    "C_ClassTalents.GetActiveConfigID", "C_Traits.GetConfigInfo", "C_SpecializationInfo.GetTalentInfo",
-    "C_EquipmentSet.GetEquipmentSetIDs", "C_EquipmentSet.GetEquipmentSetAssignedSpec" }
-  local yes, no = {}, {}
-  for _, a in ipairs(apis) do if has(a) then yes[#yes + 1] = a else no[#no + 1] = a end end
-  BF.Print("Présentes : " .. table.concat(yes, ", "))
-  BF.Print("Absentes : " .. (#no > 0 and table.concat(no, ", ") or "aucune"))
-  if GetNumTalentTabs then
-    local n = GetNumTalentTabs()
-    BF.Print("Arbres de talents : " .. tostring(n))
-    for tab = 1, (n or 0) do
-      local r = { pcall(GetTalentTabInfo, tab) }
-      BF.Print(("  arbre %d : %s"):format(tab, table.concat((function() local o = {} for i = 2, math.min(#r, 7) do o[#o + 1] = tostring(r[i]) end return o end)(), " | ")))
-    end
-    if GetNumTalents then
-      local num = GetNumTalents(1)
-      BF.Print("Talents dans l'arbre 1 : " .. tostring(num))
-      local r = { pcall(GetTalentInfo, 1, 1) }
-      local o = {}
-      for i = 2, math.min(#r, 10) do o[#o + 1] = tostring(r[i]) end
-      BF.Print("  talent 1 de l'arbre 1 : " .. table.concat(o, " | "))
-    end
-  end
-  if GetActiveTalentGroup then BF.Print("Groupe de talents actif : " .. tostring(GetActiveTalentGroup()) ..
-    (GetNumTalentGroups and (" sur " .. tostring(GetNumTalentGroups())) or "")) end
-  if GetSpecialization then
-    local idx = GetSpecialization()
-    BF.Print("Spécialisation active : " .. tostring(idx) .. " = " .. tostring(idx and select(2, GetSpecializationInfo(idx))))
-  end
-  if C_ClassTalents and C_ClassTalents.GetActiveConfigID then BF.Print("Config de talents (Dragonflight) : " .. tostring(C_ClassTalents.GetActiveConfigID())) end
-  if C_EquipmentSet and C_EquipmentSet.GetEquipmentSetIDs then
-    for _, id in ipairs(C_EquipmentSet.GetEquipmentSetIDs()) do
-      local name = C_EquipmentSet.GetEquipmentSetInfo(id)
-      local spec = C_EquipmentSet.GetEquipmentSetAssignedSpec and C_EquipmentSet.GetEquipmentSetAssignedSpec(id)
-      BF.Print(("Ensemble « %s » : spé liée = %s"):format(tostring(name), tostring(spec)))
-    end
-  end
-end
