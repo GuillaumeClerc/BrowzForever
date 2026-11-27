@@ -1,0 +1,10 @@
+{
+ "token": "JETON_DU_BOT_ICI",
+ "cle_guilde": "CLE_SECRETE_PARTAGEE_AVEC_LES_CLIENTS",
+ "port": 8787,
+ "salon_bdg": "banque-de-guilde",
+ "salon_officiers": "officier",
+ "salon_metiers": "commandes-m",
+ "salon_donnees": "browz-donnees",
+ "api_http": true
+}

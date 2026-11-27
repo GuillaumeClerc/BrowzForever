@@ -1,0 +1,13 @@
+# Secrets et données : ne JAMAIS publier
+config_bot.json
+config.json
+donnees.json
+etat.json
+*.tmp
+
+# Fichiers générés
+icones/
+__pycache__/
+*.pyc
+*.7z
+*.zip
