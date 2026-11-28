@@ -13,7 +13,7 @@ BF.Sort = Sort
 local SLOTS = MAX_GUILDBANK_SLOTS_PER_TAB or 98
 local ROWS = 7                                   -- le coffre affiche les cases par colonnes de 7
 local COLS = math.floor(SLOTS / ROWS)
-local STEP = 0.5                                 -- le coffre refuse les actions trop rapprochées
+local STEP = 0.35                                -- marge après la confirmation du coffre
 
 -- Types d'onglet ---------------------------------------------------------------------------------
 local FILTERS = {
@@ -217,22 +217,40 @@ local function stepMerge(tab)
   return false
 end
 
--- 3) mise en ordre
+-- 3) mise en ordre, en ne posant JAMAIS un objet sur une case occupée (le coffre ne fait pas d'échange fiable) :
+--    si la case voulue est prise par un autre objet, on déplace d'abord cet objet vers une case vide « libre »
+--    (qui doit rester vide, ou dont le contenu voulu n'est pas encore là), puis on pose le bon objet.
 local function stepOrder(tab)
   local slots = readTab(tab)
   local want = desired(slots)
+  local function emptySlot(except)
+    -- d'abord une case qui doit rester vide, en partant de la fin ; sinon n'importe quelle case vide après « except »
+    for u = SLOTS, 1, -1 do if u ~= except and not slots[u] and not want[u] then return u end end
+    for u = SLOTS, 1, -1 do if u ~= except and not slots[u] then return u end end
+  end
   for t = 1, SLOTS do
     local w, occ = want[t], slots[t]
     if w and not (occ and occ.id == w) and not job.skip[tab .. ":" .. t] then
-      for s = 1, SLOTS do
-        local it = slots[s]
-        if s ~= t and it and it.id == w and want[s] ~= it.id then
-          job.check = { tab = tab, slot = t, id = w, kind = "ordre" }
-          move(tab, s, tab, t)
+      if occ then
+        -- la case est prise par autre chose : on la libère
+        local u = emptySlot(t)
+        if not u then job.skip[tab .. ":" .. t] = true; job.full[tab] = true
+        else
+          job.check = { tab = tab, slot = u, id = occ.id, kind = "ordre", target = t }
+          move(tab, t, tab, u)
           return true
         end
+      else
+        for s = 1, SLOTS do
+          local it = slots[s]
+          if s ~= t and it and it.id == w and want[s] ~= it.id then
+            job.check = { tab = tab, slot = t, id = w, kind = "ordre", target = t }
+            move(tab, s, tab, t)
+            return true
+          end
+        end
+        job.skip[tab .. ":" .. t] = true          -- rien à mettre là (ne devrait pas arriver)
       end
-      job.skip[tab .. ":" .. t] = true          -- rien à mettre là (ne devrait pas arriver)
     end
   end
   return false
@@ -255,7 +273,9 @@ local function verify()
     if it and it.id == c.id then job.skip[c.tab .. ":" .. c.slot] = true; job.failed = job.failed + 1 end
   elseif c.kind == "ordre" then
     if not (it and it.id == c.id) then
-      job.skip[c.tab .. ":" .. c.slot] = true; job.failed = job.failed + 1
+      local k = c.tab .. ":" .. c.target
+      job.tries[k] = (job.tries[k] or 0) + 1
+      if job.tries[k] >= 2 then job.skip[k] = true; job.failed = job.failed + 1 end   -- 2 échecs : on laisse
     end
   end
 end
@@ -265,7 +285,7 @@ local function step()
   if not BF.Bank.IsReady() then stop("Rangement arrêté : coffre fermé."); return end
   ClearCursor()
   verify()
-  if job.moves >= 400 then stop("|cffff5555Rangement arrêté :|r trop de déplacements."); return end
+  if job.moves >= 600 then stop("|cffff5555Rangement arrêté :|r trop de déplacements."); return end
   local acted = false
   if job.phase == "onglets" then
     acted = stepTabs()
@@ -282,7 +302,10 @@ local function step()
     end
   end
   if acted then
-    C_Timer.After(STEP, step)
+    -- on attend que le coffre confirme (GUILDBANKBAGSLOTS_CHANGED) avant de relire ; 3 s au plus
+    job.waiting = true
+    local me = job
+    job.timeout = C_Timer.NewTimer(3, function() if job == me and job.waiting then job.waiting = false; step() end end)
   else
     local extra = {}
     if job.refused > 0 then extra[#extra + 1] = ("%d fusion(s) refusée(s) par le jeu (piles d'autres royaumes)"):format(job.refused) end
@@ -302,7 +325,7 @@ function Sort.Start()
   -- charge les infos des objets avant de trier (noms, types)
   for _, t in ipairs(tabs) do for _, it in pairs(readTab(t)) do info(it.id, it.link) end end
   job = { tabs = tabs, ti = 1, phase = "onglets", moves = 0, refused = 0, failed = 0,
-          skip = {}, failedMerge = {}, failId = {}, full = {}, startTab = GetCurrentGuildBankTab and GetCurrentGuildBankTab() }
+          skip = {}, tries = {}, failedMerge = {}, failId = {}, full = {}, startTab = GetCurrentGuildBankTab and GetCurrentGuildBankTab() }
   wipe(infoCache)                                -- relu proprement maintenant que les infos arrivent
   BF.Print(("Rangement du coffre (%d onglet(s))… clique à nouveau sur le bouton pour arrêter."):format(#tabs))
   if button then button:Update() end
@@ -310,6 +333,16 @@ function Sort.Start()
 end
 
 BF.Bank.OnClosed(function() if job then stop("Rangement arrêté : coffre fermé.") end end)
+
+local ev = CreateFrame("Frame")
+ev:RegisterEvent("GUILDBANKBAGSLOTS_CHANGED")
+ev:SetScript("OnEvent", function()
+  if not (job and job.waiting) then return end
+  job.waiting = false
+  if job.timeout then job.timeout:Cancel(); job.timeout = nil end
+  local me = job
+  C_Timer.After(STEP, function() if job == me then step() end end)   -- petite marge : le coffre refuse les clics trop rapides
+end)
 
 -- Bouton sur la fenêtre du coffre ------------------------------------------------------------------
 local function filterMenu(owner)
