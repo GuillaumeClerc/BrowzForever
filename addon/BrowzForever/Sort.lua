@@ -82,7 +82,7 @@ local function readTab(tab)
   return slots
 end
 
--- Disposition voulue : [case] = id (ou nil = vide)
+-- Disposition voulue : [case] = { id, count } (ou nil = vide) ; les plus grosses piles d'un objet en premier
 local function desired(slots)
   local list = {}
   for _, it in pairs(slots) do
@@ -102,7 +102,7 @@ local function desired(slots)
   local groups, last = {}, nil
   for _, e in ipairs(list) do
     if e.i.group ~= last then groups[#groups + 1] = {}; last = e.i.group end
-    table.insert(groups[#groups], e.id)
+    table.insert(groups[#groups], e)
   end
   local cols = 0
   for _, g in ipairs(groups) do cols = cols + math.ceil(#g / ROWS) end
@@ -110,7 +110,7 @@ local function desired(slots)
   local want, pos = {}, 1
   for _, g in ipairs(groups) do
     if gaps and (pos - 1) % ROWS ~= 0 then pos = (math.floor((pos - 1) / ROWS) + 1) * ROWS + 1 end
-    for _, id in ipairs(g) do want[pos] = id; pos = pos + 1 end
+    for _, e in ipairs(g) do want[pos] = { id = e.id, count = e.count }; pos = pos + 1 end
   end
   return want
 end
@@ -224,28 +224,29 @@ end
 local function stepOrder(tab)
   local slots = readTab(tab)
   local want = desired(slots)
+  local function same(it, w) return it and w and it.id == w.id and it.count == w.count end
   local function emptySlot(except)
-    -- d'abord une case qui doit rester vide, en partant de la fin ; sinon n'importe quelle case vide après « except »
+    -- d'abord une case qui doit rester vide, en partant de la fin ; sinon n'importe quelle case vide
     for u = SLOTS, 1, -1 do if u ~= except and not slots[u] and not want[u] then return u end end
     for u = SLOTS, 1, -1 do if u ~= except and not slots[u] then return u end end
   end
   for t = 1, SLOTS do
     local w, occ = want[t], slots[t]
-    if w and not (occ and occ.id == w) and not job.skip[tab .. ":" .. t] then
+    if w and not same(occ, w) and not job.skip[tab .. ":" .. t] then
       if occ then
-        -- la case est prise par autre chose : on la libère
+        -- la case est prise par autre chose (ou une pile d'une autre taille) : on la libère
         local u = emptySlot(t)
         if not u then job.skip[tab .. ":" .. t] = true; job.full[tab] = true
         else
-          job.check = { tab = tab, slot = u, id = occ.id, kind = "ordre", target = t }
+          job.check = { tab = tab, slot = u, id = occ.id, count = occ.count, kind = "ordre", target = t }
           move(tab, t, tab, u)
           return true
         end
       else
         for s = 1, SLOTS do
           local it = slots[s]
-          if s ~= t and it and it.id == w and want[s] ~= it.id then
-            job.check = { tab = tab, slot = t, id = w, kind = "ordre", target = t }
+          if s ~= t and same(it, w) and not same(it, want[s]) then
+            job.check = { tab = tab, slot = t, id = w.id, count = w.count, kind = "ordre", target = t }
             move(tab, s, tab, t)
             return true
           end
@@ -277,7 +278,7 @@ local function verify()
   elseif c.kind == "onglet" then
     if it and it.id == c.id then job.skip[c.tab .. ":" .. c.slot] = true; job.failed = job.failed + 1 end
   elseif c.kind == "ordre" then
-    if not (it and it.id == c.id) then
+    if not (it and it.id == c.id and it.count == c.count) then
       local k = c.tab .. ":" .. c.target
       job.tries[k] = (job.tries[k] or 0) + 1
       if job.tries[k] >= 2 then job.skip[k] = true; job.failed = job.failed + 1 end   -- 2 échecs : on laisse
