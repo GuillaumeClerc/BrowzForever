@@ -31,6 +31,7 @@ Les membres n'en ont pas besoin.
 4. En jeu : `/browz pont on` (une seule fois).
 
 Le client **se met à jour tout seul** (il vérifie les *Releases* du dépôt au démarrage puis toutes les 6 h).
+Pour le redémarrer (et vérifier tout de suite s'il y a une mise à jour), relance simplement `BrowzClient.exe`.
 `Desinstaller.bat` l'arrête et le retire du démarrage ; `Voir le journal.bat` ouvre son journal.
 Windows peut afficher un avertissement (« Windows a protégé votre ordinateur ») : c'est normal pour un petit
 programme non signé, clique sur *Informations complémentaires → Exécuter quand même*.

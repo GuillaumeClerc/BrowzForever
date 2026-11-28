@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-CLIENT_VERSION = 13                             # à publier sur GitHub avec l'étiquette « client-v13 »
+CLIENT_VERSION = 14                             # à publier sur GitHub avec l'étiquette « client-v14 »
 UPDATE_URL = "https://api.github.com/repos/GuillaumeClerc/BrowzForever/releases?per_page=20"
 FROZEN = getattr(sys, "frozen", False)          # True dans BrowzClient.exe (PyInstaller)
 HERE = os.path.dirname(sys.executable if FROZEN else os.path.abspath(__file__))
@@ -161,16 +161,55 @@ def check_update(lock):
     os._exit(0)
 
 
+LOCK_PORT = 47321
+
+
 def single_instance():
-    """Un seul client à la fois (lancé avec Windows ET à la main, par exemple)."""
+    """Un seul client à la fois. Le client qui tourne écoute sur un port local : relancer l'exe lui demande de
+    s'arrêter, et le nouveau prend sa place (il vérifie au passage s'il y a une mise à jour)."""
     import socket
+    import threading
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    else:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        s.bind(("127.0.0.1", 47321))
+        s.bind(("127.0.0.1", LOCK_PORT))
         s.listen(1)
-        return s          # garder la référence : le port reste pris tant que le client tourne
     except OSError:
+        s.close()
         return None
+
+    def listen():
+        while True:
+            try:
+                conn, _ = s.accept()
+                conn.settimeout(3)
+                msg = conn.recv(16)
+                try:
+                    while conn.recv(16):   # on laisse l'autre côté fermer en premier (port libéré tout de suite)
+                        pass
+                except OSError:
+                    pass
+                conn.close()
+            except OSError:
+                return
+            if msg.startswith(b"STOP"):
+                log("Un nouveau lancement du client prend la relève : arrêt de celui-ci.")
+                os._exit(0)
+    threading.Thread(target=listen, daemon=True).start()
+    return s          # garder la référence : le port reste pris tant que le client tourne
+
+
+def ask_running_client_to_stop():
+    import socket
+    try:
+        with socket.create_connection(("127.0.0.1", LOCK_PORT), timeout=3) as c:
+            c.sendall(b"STOP")
+        return True
+    except OSError:
+        return False
 
 
 # ---------------------------------------------------------------- lecture des SavedVariables
@@ -694,10 +733,16 @@ def main():
     test = "--test" in sys.argv
     lock = single_instance()
     if lock is None:
-        time.sleep(5)                 # juste après une mise à jour, l'ancien client finit de s'arrêter
-        lock = single_instance()
+        # un client tourne déjà : on lui demande de s'arrêter et on prend sa place (relancer l'exe = redémarrer
+        # le client, et vérifier les mises à jour, sans passer par le Gestionnaire des tâches)
+        ask_running_client_to_stop()
+        for _ in range(20):
+            time.sleep(0.5)
+            lock = single_instance()
+            if lock is not None:
+                break
     if lock is None:
-        log("Un client Browz tourne déjà : celui-ci s'arrête.")
+        log("Un client Browz tourne déjà et ne répond pas : celui-ci s'arrête.")
         return
     if FROZEN:
         try:
