@@ -209,12 +209,32 @@ local withdrawLog = {}
 function Req.WithdrawLog() return withdrawLog end
 
 -- Retire du coffre ce qui manque dans les sacs pour les demandes que j'ai acceptées.
--- Toujours en posant la pile dans une case VIDE des sacs (comme un glisser-déposer) : sur Forever, le clic droit
--- (rangement auto) échoue pour les piles venant d'autres royaumes (« impossible de combiner… »).
--- attempt 1 : quantités exactes (une pile coupée si besoin) ; attempt 2 : seulement des piles entières (sur Forever,
--- couper une pile venue d'un autre royaume peut être refusé) ; le surplus est recoupé dans les sacs et reposé au coffre.
-function Req.Withdraw(attempt)
-  attempt = attempt or 1
+-- Sur Forever, le coffre refuse de COUPER une pile venue d'un autre royaume (erreur rouge) et le clic droit
+-- (rangement auto) refuse de les combiner. Donc : on ne prend que des PILES ENTIÈRES, posées chacune dans une case
+-- vide des sacs, en choisissant les piles qui font le total le plus proche au-dessus de ce qu'il faut. S'il y a du
+-- surplus, il est coupé dans les sacs (là, le jeu l'accepte) et reposé dans la case du coffre libérée.
+local function pickStacks(stacks, need)
+  -- somme atteignable la plus petite >= need (sac à dos) ; best[s] = liste d'indices
+  local maxc = 0
+  for _, st in ipairs(stacks) do maxc = math.max(maxc, st.count) end
+  local limit = need + maxc
+  local best = { [0] = {} }
+  for i, st in ipairs(stacks) do
+    for sum = limit, st.count, -1 do
+      local prev = best[sum - st.count]
+      if prev and not best[sum] then
+        local l = { unpack(prev) }; l[#l + 1] = i; best[sum] = l
+      end
+    end
+  end
+  for sum = need, limit do if best[sum] then return best[sum], sum - need end end
+  -- pas assez dans le coffre : tout ce qu'il y a
+  local all = {}
+  for i in ipairs(stacks) do all[#all + 1] = i end
+  return all, 0
+end
+
+function Req.Withdraw()
   if not BF.Bank.IsReady() then return end
   local needs = {}   -- [id] = quantité à retirer
   local list = Req.List(function(r) return r.status == "acceptee" and r.by == BF.MyName() end)
@@ -224,67 +244,54 @@ function Req.Withdraw(attempt)
   for id, n in pairs(needs) do before[id] = bagCount(id); needs[id] = math.max(0, n - before[id]) end
   local free = freeBagSlots()
   for id, n in pairs(needs) do
-    -- piles de cet objet dans le coffre
-    local stacks = {}
-    for tab = 1, (GetNumGuildBankTabs() or 0) do
-      for slot = 1, (MAX_GUILDBANK_SLOTS_PER_TAB or 98) do
-        local link = GetGuildBankItemLink(tab, slot)
-        local _, count = GetGuildBankItemInfo(tab, slot)
-        if link and count and count > 0 and C_Item.GetItemInfoInstant(link) == id then
-          stacks[#stacks + 1] = { tab = tab, slot = slot, count = count }
+    if n > 0 then
+      local stacks, total = {}, 0
+      for tab = 1, (GetNumGuildBankTabs() or 0) do
+        for slot = 1, (MAX_GUILDBANK_SLOTS_PER_TAB or 98) do
+          local link = GetGuildBankItemLink(tab, slot)
+          local _, count = GetGuildBankItemInfo(tab, slot)
+          if link and count and count > 0 and C_Item.GetItemInfoInstant(link) == id then
+            stacks[#stacks + 1] = { tab = tab, slot = slot, count = count }; total = total + count
+          end
+        end
+      end
+      if total < n then BF.Print(("|cffff5555Il manque %d × %s dans la banque.|r"):format(n - total, itemName(id))) end
+      local picked, extra = pickStacks(stacks, n)
+      -- le surplus est recoupé dans la plus grosse pile prise
+      local cut
+      if extra > 0 then
+        for _, i in ipairs(picked) do if not cut or stacks[i].count > stacks[cut].count then cut = i end end
+      end
+      for _, i in ipairs(picked) do
+        local st, spot = stacks[i], nil
+        push(function()
+          spot = table.remove(free, 1)
+          if not spot then error("plus de place dans les sacs") end
+          if SetCurrentGuildBankTab then SetCurrentGuildBankTab(st.tab) end
+          ClearCursor()
+          PickupGuildBankItem(st.tab, st.slot)
+          C_Container.PickupContainerItem(spot[1], spot[2])
+          BF.Print(("Pris au coffre : pile de %d × %s"):format(st.count, itemName(id)))
+        end)
+        push(function() end)   -- le coffre refuse les actions trop rapprochées : une pause entre deux piles
+        if i == cut then
+          push(function() end)   -- la pile doit être arrivée dans le sac avant de la couper
+          push(function()
+            if not spot then return end
+            if SetCurrentGuildBankTab then SetCurrentGuildBankTab(st.tab) end
+            ClearCursor()
+            C_Container.SplitContainerItem(spot[1], spot[2], extra)
+            if CursorHasItem() then
+              PickupGuildBankItem(st.tab, st.slot)
+              BF.Print(("Remis au coffre : %d × %s (surplus)"):format(extra, itemName(id)))
+            else
+              BF.Print(("|cffff5555Impossible de recouper la pile :|r %d × %s en trop dans tes sacs."):format(extra, itemName(id)))
+            end
+          end)
+          push(function() ClearCursor() end)
         end
       end
     end
-    local left = n
-    local plan = {}   -- { pile, quantité }
-    if attempt == 1 then
-      table.sort(stacks, function(a, b) return a.count > b.count end)
-      for _, st in ipairs(stacks) do
-        if left <= 0 then break end
-        local take = math.min(left, st.count)
-        plan[#plan + 1] = { st, take }
-        left = left - take
-      end
-    else
-      -- piles entières : la plus petite qui suffit, sinon la plus grande et on continue
-      while left > 0 and #stacks > 0 do
-        table.sort(stacks, function(a, b) return a.count < b.count end)
-        local pick
-        for k, st in ipairs(stacks) do if st.count >= left then pick = k break end end
-        pick = pick or #stacks
-        local st = table.remove(stacks, pick)
-        -- surplus : ce qu'on prend en trop avec cette pile, remis dans le coffre juste après
-        plan[#plan + 1] = { st, st.count, math.max(0, st.count - left) }
-        left = left - st.count
-      end
-    end
-    for _, p in ipairs(plan) do
-      local st, take, extra = p[1], p[2], p[3] or 0
-      local spot
-      push(function()
-        spot = table.remove(free, 1)
-        if not spot then error("plus de place dans les sacs") end
-        if SetCurrentGuildBankTab then SetCurrentGuildBankTab(st.tab) end
-        ClearCursor()
-        if take >= st.count then PickupGuildBankItem(st.tab, st.slot) else SplitGuildBankItem(st.tab, st.slot, take) end
-        C_Container.PickupContainerItem(spot[1], spot[2])
-      end)
-      push(function() end)   -- le coffre refuse les actions trop rapprochées : une pause entre deux piles
-      if extra > 0 then
-        -- la pile entière est dans le sac : on coupe le surplus (dans les sacs, ça passe) et on le repose
-        -- dans la case du coffre qu'elle vient de libérer
-        push(function()
-          if not spot then return end
-          if SetCurrentGuildBankTab then SetCurrentGuildBankTab(st.tab) end
-          ClearCursor()
-          C_Container.SplitContainerItem(spot[1], spot[2], extra)
-          if CursorHasItem() then PickupGuildBankItem(st.tab, st.slot) end
-          ClearCursor()
-        end)
-        push(function() end)
-      end
-    end
-    if left > 0 and attempt == 1 then BF.Print(("|cffff5555Il manque %d × %s dans la banque.|r"):format(left, itemName(id))) end
   end
   push(function() end)   -- laisse au serveur le temps de répondre
   push(function()
@@ -294,11 +301,6 @@ function Req.Withdraw(attempt)
       local got = bagCount(id) - (before[id] or 0)
       if got > 0 then withdrawLog[#withdrawLog + 1] = ("Retiré %s"):format(itemLabel(id, got)) end
       if got < n then missing = true end
-    end
-    if missing and attempt < 2 then
-      changed()
-      C_Timer.After(1.5, function() Req.Withdraw(attempt + 1) end)   -- 2e essai avec des piles entières
-      return
     end
     for _, r in ipairs(list) do
       local all = true
@@ -639,24 +641,16 @@ cw:SetScript("OnShow", Req.RefreshCart)
 -- selon les versions du jeu : on essaie les unes après les autres)
 function BF.InsertChatLink(link)
   local CFU = _G.ChatFrameUtil
-  -- même chemin que Maj+clic : marche directement si la zone de saisie est déjà ouverte
+  -- zone de saisie déjà ouverte : on ajoute le lien à la suite du texte
   local insert = (CFU and CFU.InsertLink) or _G.ChatEdit_InsertLink
-  local function tryInsert() local ok, done = pcall(insert, link); return ok and done end
-  if insert and tryInsert() then return end
-  -- sinon on ouvre le chat comme avec Entrée (il reprend le dernier canal utilisé : guilde, groupe, chuchotement…)
-  local open = (CFU and CFU.OpenChat) or _G.ChatFrame_OpenChat
-  if open then pcall(open, "") end
-  if insert and tryInsert() then return end
-  -- dernier recours : la zone de saisie de la fenêtre de chat principale
-  local frame = _G.SELECTED_CHAT_FRAME or _G.DEFAULT_CHAT_FRAME
-  local box = frame and (frame.editBox or _G[frame:GetName() .. "EditBox"])
-  if not box then
-    BF.Print("Impossible d'ouvrir le chat : appuie sur Entrée puis Maj+clic sur l'objet.")
-    return
+  if insert then
+    local ok, done = pcall(insert, link)
+    if ok and done then return end
   end
-  if not box:IsShown() then box:Show() end
-  box:SetFocus()
-  box:Insert(link)
+  -- sinon on ouvre le chat (comme Entrée : dernier canal utilisé) avec le lien déjà écrit dedans
+  local open = (CFU and CFU.OpenChat) or _G.ChatFrame_OpenChat
+  if open and pcall(open, link) then return end
+  BF.Print("Impossible d'ouvrir le chat : appuie sur Entrée puis Maj+clic sur l'objet.")
 end
 
 -- Clics sur les objets de l'onglet Banque (UI.lua) : clic droit = menu, clic gauche = +1 si une demande est ouverte
@@ -675,7 +669,7 @@ function BF.OnBankItemClick(owner, mouse, id)
             BF.Print("Objet pas encore chargé par le jeu : réessaie dans une seconde.")
             return
           end
-          C_Timer.After(0.05, function() BF.InsertChatLink(link) end)   -- après la fermeture du menu
+          C_Timer.After(0.1, function() BF.InsertChatLink(link) end)   -- après la fermeture du menu
         end)
       end)
     else
