@@ -572,19 +572,29 @@ function BF.InsertChatLink(link)
   local getActive = (CFU and CFU.GetActiveWindow) or _G.ChatEdit_GetActiveWindow
   local box = getActive and getActive()
   if box and box:IsShown() then box:Insert(link); return end
-  local open = (CFU and CFU.OpenChat) or _G.ChatFrame_OpenChat
-  if open and pcall(open, link) then
-    box = getActive and getActive()
-    if box and box:IsShown() then return end
-  end
-  -- dernier recours : la zone de saisie de la fenêtre de chat principale
+  -- on garde le dernier canal utilisé (guilde, groupe, chuchotement…) : l'ouverture du chat peut le remettre sur « Dire »
   local frame = _G.SELECTED_CHAT_FRAME or _G.DEFAULT_CHAT_FRAME
-  box = frame and (frame.editBox or _G[frame:GetName() .. "EditBox"])
-  if box then
-    box:Show(); box:SetFocus(); box:Insert(link)
-  else
-    BF.Print("Impossible d'ouvrir le chat : appuie sur Entrée puis Maj+clic sur l'objet.")
+  local eb = frame and (frame.editBox or _G[frame:GetName() .. "EditBox"])
+  local last = eb and { eb:GetAttribute("chatType"), eb:GetAttribute("tellTarget"), eb:GetAttribute("channelTarget") }
+  local open = (CFU and CFU.OpenChat) or _G.ChatFrame_OpenChat
+  local opened = open and pcall(open, "")
+  box = getActive and getActive()
+  if not (opened and box and box:IsShown()) then
+    box = eb
+    if not box then
+      BF.Print("Impossible d'ouvrir le chat : appuie sur Entrée puis Maj+clic sur l'objet.")
+      return
+    end
+    box:Show(); box:SetFocus()
   end
+  if last and last[1] then
+    box:SetAttribute("chatType", last[1])
+    if last[2] then box:SetAttribute("tellTarget", last[2]) end
+    if last[3] then box:SetAttribute("channelTarget", last[3]) end
+    local update = (CFU and CFU.UpdateHeader) or _G.ChatEdit_UpdateHeader
+    if update then pcall(update, box) end
+  end
+  box:Insert(link)
 end
 
 -- Clics sur les objets de l'onglet Banque (UI.lua) : clic droit = menu, clic gauche = +1 si une demande est ouverte
