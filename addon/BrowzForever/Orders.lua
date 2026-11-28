@@ -427,16 +427,27 @@ StaticPopupDialogs["BROWZFOREVER_COMMISSION"] = {
     if eb then eb:SetText("0"); eb:SetFocus(); eb:HighlightText() end
   end,
   OnAccept = function(self, o)
+    o = o or self.data
     local eb = self.editBox or self.EditBox or (self.GetEditBox and self:GetEditBox())
-    local po = tonumber(((eb and eb:GetText()) or "0"):gsub(",", ".")) or 0
-    Ord.Take(o, math.floor(po * 10000 + 0.5))
+    -- (gsub renvoie 2 valeurs : sans les parenthèses, tonumber prenait la 2e comme base et plantait)
+    local txt = (((eb and eb:GetText()) or "0"):gsub(",", "."))
+    local po = tonumber(txt) or 0
+    if not o then BF.Print("Commande introuvable : rouvre l'onglet Craft et réessaie."); return end
+    local ok, err = pcall(Ord.Take, o, math.floor(math.max(0, po) * 10000 + 0.5))
+    if not ok then BF.Print("Impossible de prendre la commande : " .. tostring(err)) end
   end,
   EditBoxOnEnterPressed = function(eb)
+    -- la fenêtre de dialogue : le parent direct, ou plus haut selon les versions du jeu
     local p = eb:GetParent()
-    local accept = StaticPopupDialogs["BROWZFOREVER_COMMISSION"].OnAccept
-    accept(p, p.data); p:Hide()
+    while p and not p.which and p.GetParent do p = p:GetParent() end
+    p = p or eb:GetParent()
+    StaticPopupDialogs["BROWZFOREVER_COMMISSION"].OnAccept(p, p.data); p:Hide()
   end,
-  EditBoxOnEscapePressed = function(eb) eb:GetParent():Hide() end,
+  EditBoxOnEscapePressed = function(eb)
+    local p = eb:GetParent()
+    while p and not p.which and p.GetParent do p = p:GetParent() end
+    if p then p:Hide() end
+  end,
   timeout = 0, whileDead = true, hideOnEscape = true, preferredIndex = 3,
 }
 
