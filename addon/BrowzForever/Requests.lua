@@ -828,50 +828,78 @@ local function isMine(who)
 end
 
 local waitingMine = {}
-local function addAll(status)
-  for _, r in ipairs(waitingMine) do
-    if not db()[r.id] then
-      r.status, r.upd = status, math.max(GetServerTime(), (r.upd or 0) + 1)
-      db()[r.id] = r
-      publish(r)
-    end
+
+-- Fenêtre « Demandes faites sur Discord » : une ligne par demande (Ajouter / Supprimer), et en bas
+-- « Tout ajouter » ou « Plus tard » (elles seront reproposées à la prochaine connexion).
+local dw, dwRows
+local function decideOne(r, status)
+  for k, x in ipairs(waitingMine) do if x.id == r.id then table.remove(waitingMine, k) break end end
+  if not db()[r.id] then
+    r.status, r.upd = status, math.max(GetServerTime(), (r.upd or 0) + 1)
+    db()[r.id] = r
+    publish(r)
+    changed()
   end
-  BF.Print(("%d demande(s) Discord %s."):format(#waitingMine, status == "attente" and "ajoutée(s) en jeu" or "supprimée(s)"))
-  wipe(waitingMine)
-  changed()
+  BF.Print(("Demande Discord %s : %s"):format(status == "attente" and "ajoutée" or "supprimée", Req.ItemsText(r.items)))
 end
 
-StaticPopupDialogs["BROWZFOREVER_DISCORD_REQ"] = {
-  text = "%s",
-  button1 = "Tout ajouter", button2 = "Tout supprimer", button3 = "Plus tard",
-  OnAccept = function() addAll("attente") end,
-  OnCancel = function(_, _, reason) if reason == "clicked" then addAll("annulee") end end,
-  OnAlt = function() wipe(waitingMine) end,
-  timeout = 0, whileDead = true, hideOnEscape = false, preferredIndex = 3,   -- Échap ne doit pas supprimer
-}
+local function showPopup()
+  if #waitingMine == 0 then if dw then dw:Hide() end return end
+  if not dw then
+    dw = CreateFrame("Frame", "BrowzForeverDiscordRequests", UIParent, "BasicFrameTemplateWithInset")
+    dw:SetSize(460, 330); dw:SetPoint("CENTER", 0, 80); dw:SetFrameStrata("DIALOG")
+    dw:SetMovable(true); dw:EnableMouse(true); dw:RegisterForDrag("LeftButton")
+    dw:SetScript("OnDragStart", dw.StartMoving); dw:SetScript("OnDragStop", dw.StopMovingOrSizing)
+    dw.title = dw:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); dw.title:SetPoint("TOP", 0, -5)
+    dw.title:SetText("Browz Forever — demandes faites sur Discord")
+    dw.intro = label(dw); dw.intro:SetPoint("TOPLEFT", 16, -32); dw.intro:SetPoint("RIGHT", -16, 0); dw.intro:SetWordWrap(true)
+    dwRows = {}
+    for i = 1, 5 do
+      local r = CreateFrame("Frame", nil, dw)
+      r:SetSize(428, 42); r:SetPoint("TOPLEFT", 16, -58 - (i - 1) * 44)
+      r.bg = r:CreateTexture(nil, "BACKGROUND"); r.bg:SetAllPoints(); r.bg:SetColorTexture(1, 1, 1, 0.05)
+      r.top = label(r); r.top:SetPoint("TOPLEFT", 6, -5); r.top:SetPoint("RIGHT", -176, 0)
+      r.bottom = label(r, "GameFontHighlightSmall"); r.bottom:SetPoint("BOTTOMLEFT", 6, 6); r.bottom:SetPoint("RIGHT", -176, 0)
+      r.add = button(r, "Ajouter", 80, function() if r.r then decideOne(r.r, "attente"); showPopup() end end)
+      r.add:SetPoint("RIGHT", -88, 0)
+      r.del = button(r, "Supprimer", 80, function() if r.r then decideOne(r.r, "annulee"); showPopup() end end)
+      r.del:SetPoint("RIGHT", -4, 0)
+      r:EnableMouse(true)
+      r:SetScript("OnMouseUp", function(self) if self.r then Req.ShowDetail(self.r) end end)
+      dwRows[i] = r
+    end
+    dw.more = label(dw, "GameFontDisableSmall"); dw.more:SetPoint("BOTTOMLEFT", 18, 44)
+    dw.all = button(dw, "Tout ajouter", 120, function()
+      for _, r in ipairs({ unpack(waitingMine) }) do decideOne(r, "attente") end
+      dw:Hide()
+    end)
+    dw.all:SetPoint("BOTTOMRIGHT", -12, 12)
+    dw.later = button(dw, "Plus tard", 100, function() wipe(waitingMine); dw:Hide() end)
+    dw.later:SetPoint("RIGHT", dw.all, "LEFT", -6, 0)
+  end
+  dw.intro:SetText(("Tu as %d demande(s) faite(s) sur Discord. Ajoute-les en jeu pour que les officiers puissent les accepter :")
+    :format(#waitingMine))
+  for i, row in ipairs(dwRows) do
+    local r = waitingMine[i]
+    row.r = r
+    if r then
+      row.top:SetText(("|cffffffff%s|r : %s"):format(short(r.who), Req.ItemsText(r.items)))
+      row.bottom:SetText(r.why and ("« " .. r.why .. " »") or "")
+      row:Show()
+    else row:Hide() end
+  end
+  dw.more:SetText(#waitingMine > #dwRows and ("+ %d autre(s) (ajoute ou supprime les premières pour les voir)")
+    :format(#waitingMine - #dwRows) or "")
+  dw:Show()
+end
 
 local popupTimer
-local function showPopup()
-  popupTimer = nil
-  if #waitingMine == 0 then return end
-  local lines = {}
-  for i, r in ipairs(waitingMine) do
-    if i > 6 then lines[#lines + 1] = ("… et %d autre(s)"):format(#waitingMine - 6); break end
-    lines[#lines + 1] = ("• |cffffffff%s|r : %s%s"):format(short(r.who), Req.ItemsText(r.items),
-      r.why and (" — « " .. r.why .. " »") or "")
-  end
-  StaticPopup_Hide("BROWZFOREVER_DISCORD_REQ")
-  StaticPopup_Show("BROWZFOREVER_DISCORD_REQ",
-    ("Tu as %d demande(s) faite(s) sur Discord :\n\n%s\n\nLes ajouter en jeu pour que les officiers puissent les accepter ?")
-    :format(#waitingMine, table.concat(lines, "\n")))
-end
-
 local function offer(r)
   if asked[r.id] or db()[r.id] or not isMine(r.who) then return end
   asked[r.id] = true
   waitingMine[#waitingMine + 1] = r
   if popupTimer then popupTimer:Cancel() end
-  popupTimer = C_Timer.NewTimer(2, showPopup)   -- on attend un peu : une seule fenêtre pour toutes les demandes
+  popupTimer = C_Timer.NewTimer(2, function() popupTimer = nil; showPopup() end)   -- on attend un peu : une seule fenêtre pour toutes les demandes
 end
 
 BF.OnMessage("D", function(data)
