@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-CLIENT_VERSION = 12                             # à publier sur GitHub avec l'étiquette « client-v12 »
+CLIENT_VERSION = 13                             # à publier sur GitHub avec l'étiquette « client-v13 »
 UPDATE_URL = "https://api.github.com/repos/GuillaumeClerc/BrowzForever/releases?per_page=20"
 FROZEN = getattr(sys, "frozen", False)          # True dans BrowzClient.exe (PyInstaller)
 HERE = os.path.dirname(sys.executable if FROZEN else os.path.abspath(__file__))
@@ -647,16 +647,22 @@ def lua_str(v):
     return '"' + str(v).replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ") + '"'
 
 
-def write_inbox(wow, reqs, state):
+def write_inbox(wow, inbox, state):
+    reqs, decisions = inbox.get("requests") or [], inbox.get("decisions") or []
     rows = []
     for r in reqs:
         items = ", ".join("[%d] = %d" % (int(k), int(v)) for k, v in (r.get("items") or {}).items() if str(k).isdigit())
-        rows.append("    { id = %s, who = %s, t = %d, upd = %d, why = %s, items = { %s } },"
+        rows.append("    { id = %s, who = %s, t = %d, upd = %d, why = %s, decision = %s, by = %s, at = %d, items = { %s } },"
                     % (lua_str(r["id"]), lua_str(r.get("who", "")), int(r.get("t") or 0), int(r.get("upd") or 0),
-                       lua_str(r.get("why") or ""), items))
-    text = ("-- Écrit par le client Browz Forever (pont) : demandes faites sur Discord. Ne pas modifier.\n"
-            "BrowzForeverInbox = {\n  t = %d,\n  requests = {\n%s\n  },\n}\n" % (int(time.time()), "\n".join(rows)))
-    body = "\n".join(rows)
+                       lua_str(r.get("why") or ""), lua_str(r.get("decision") or ""), lua_str(r.get("by") or ""),
+                       int(r.get("at") or 0), items))
+    drows = ["    { id = %s, status = %s, by = %s, at = %d },"
+             % (lua_str(d["id"]), lua_str(d.get("status", "")), lua_str(d.get("by") or ""), int(d.get("at") or 0))
+             for d in decisions if d.get("id")]
+    body = "\n".join(rows) + "\n--\n" + "\n".join(drows)
+    text = ("-- Écrit par le client Browz Forever (pont) : demandes et décisions faites sur Discord. Ne pas modifier.\n"
+            "BrowzForeverInbox = {\n  t = %d,\n  requests = {\n%s\n  },\n  decisions = {\n%s\n  },\n}\n"
+            % (int(time.time()), "\n".join(rows), "\n".join(drows)))
     if state.get("inbox_body") == body:
         return
     path = os.path.join(wow, "Interface", "AddOns", "BrowzForever", "Inbox.lua")
@@ -667,8 +673,8 @@ def write_inbox(wow, reqs, state):
         f.write(text)
     os.replace(tmp, path)
     state["inbox_body"] = body
-    if rows:
-        log("%d demande(s) Discord prête(s) pour le jeu (lues au prochain /reload)." % len(rows))
+    if rows or drows:
+        log("%d demande(s) et %d décision(s) Discord prêtes pour le jeu (lues au prochain /reload)." % (len(rows), len(drows)))
 
 
 def fetch_inbox(cfg):
@@ -679,7 +685,7 @@ def fetch_inbox(cfg):
         q = urllib.parse.urlencode({"cle": cfg.get("cle_guilde", "")})
         with urllib.request.urlopen(url.rstrip("/") + "/api/inbox?" + q, timeout=15) as r:
             data = json.loads(r.read().decode("utf-8"))
-        return data.get("requests") if data.get("ok") else None
+        return data if data.get("ok") else None
     except (urllib.error.URLError, OSError, ValueError):
         return None
 
@@ -795,10 +801,10 @@ def main():
             check_update(lock)
         if not test and time.time() - state.get("inbox_t", 0) > 60:
             state["inbox_t"] = time.time()
-            reqs = fetch_inbox(cfg)
-            if reqs is not None:
+            inbox = fetch_inbox(cfg)
+            if inbox is not None:
                 try:
-                    write_inbox(wow, reqs, state)
+                    write_inbox(wow, inbox, state)
                 except OSError as e:
                     log("Inbox.lua impossible à écrire (%s)." % e)
         state["passages_envoyes"] = list(sent_ids)[-1000:]

@@ -198,14 +198,17 @@ local function push(job) queue[#queue + 1] = job; if not running then running = 
 local withdrawLog = {}
 function Req.WithdrawLog() return withdrawLog end
 
--- Retire du coffre ce qui manque dans les sacs pour les demandes que j'ai acceptées
+-- Retire du coffre ce qui manque dans les sacs pour les demandes que j'ai acceptées.
+-- Toujours en posant la pile dans une case VIDE des sacs (comme un glisser-déposer) : sur Forever, le clic droit
+-- (rangement auto) échoue pour les piles venant d'autres royaumes (« impossible de combiner… »).
 function Req.Withdraw()
   if not BF.Bank.IsReady() then return end
   local needs = {}   -- [id] = quantité à retirer
   local list = Req.List(function(r) return r.status == "acceptee" and r.by == BF.MyName() end)
   if #list == 0 then return end
   for _, r in ipairs(list) do for id, n in pairs(r.items) do needs[id] = (needs[id] or 0) + n end end
-  for id, n in pairs(needs) do needs[id] = math.max(0, n - bagCount(id)) end
+  local before = {}
+  for id, n in pairs(needs) do before[id] = bagCount(id); needs[id] = math.max(0, n - before[id]) end
   local free = freeBagSlots()
   for id, n in pairs(needs) do
     local left = n
@@ -218,28 +221,34 @@ function Req.Withdraw()
           local take = math.min(left, count)
           left = left - take
           push(function()
+            local spot = table.remove(free, 1)
+            if not spot then error("plus de place dans les sacs") end
             if SetCurrentGuildBankTab then SetCurrentGuildBankTab(tab) end
-            if take >= count then
-              AutoStoreGuildBankItem(tab, slot)
-            else
-              local spot = table.remove(free, 1)
-              if not spot then error("plus de place dans les sacs") end
-              SplitGuildBankItem(tab, slot, take)
-              C_Container.PickupContainerItem(spot[1], spot[2])
-            end
-            withdrawLog[#withdrawLog + 1] = ("Retiré %s"):format(itemLabel(id, take))
-            changed()
+            ClearCursor()
+            if take >= count then PickupGuildBankItem(tab, slot) else SplitGuildBankItem(tab, slot, take) end
+            C_Container.PickupContainerItem(spot[1], spot[2])
           end)
         end
       end
     end
     if left > 0 then BF.Print(("|cffff5555Il manque %d × %s dans la banque.|r"):format(left, itemName(id))) end
   end
+  push(function() end)   -- laisse au serveur le temps de répondre
   push(function()
+    ClearCursor()
+    local missing = false
+    for id, n in pairs(needs) do
+      local got = bagCount(id) - (before[id] or 0)
+      if got > 0 then withdrawLog[#withdrawLog + 1] = ("Retiré %s"):format(itemLabel(id, got)) end
+      if got < n then missing = true end
+    end
     for _, r in ipairs(list) do
       local all = true
       for id, n in pairs(r.items) do if bagCount(id) < n then all = false end end
       if all then update(r, "retiree") end
+    end
+    if missing then
+      BF.Print("|cffff5555Le jeu n'a pas laissé l'addon tout retirer :|r glisse les objets manquants du coffre vers tes sacs.")
     end
     BF.Print("|cff33ff33Va à la boîte aux lettres : le courrier sera pré-rempli, tu n'auras plus qu'à cliquer sur Envoyer !|r")
     changed()
@@ -255,41 +264,46 @@ BF.Bank.OnLoaded(function()
 end)
 BF.Bank.OnClosed(function() if Req.side then Req.side:Hide() end end)
 
--- Mettre des objets précis (quantités exactes) dans des cases d'envoi : courrier ou échange
-local function findStack(id, want, used)
-  local best
+-- Mettre des objets précis (quantités exactes) dans des cases d'envoi : courrier ou échange.
+-- 1) les piles trop grosses sont d'abord coupées dans une case vide des sacs ; 2) on pose les piles exactes.
+local function stacksOf(id)
+  local out = {}
   for bag = 0, (NUM_BAG_SLOTS or 4) do
     for slot = 1, (C_Container.GetContainerNumSlots(bag) or 0) do
       local info = C_Container.GetContainerItemInfo(bag, slot)
-      if info and info.itemID == id and not info.isLocked and not used[bag * 100 + slot] then
-        if info.stackCount == want then return bag, slot, info.stackCount end
-        if not best or info.stackCount > best[3] then best = { bag, slot, info.stackCount } end
+      if info and info.itemID == id and not info.isLocked then out[#out + 1] = { bag, slot, info.stackCount } end
+    end
+  end
+  table.sort(out, function(a, b) return a[3] > b[3] end)
+  return out
+end
+
+local function fill(items, maxSlots, put, done)   -- put(index) dépose ce qui est sur le curseur
+  local targets, free = {}, freeBagSlots()
+  for id, n in pairs(items) do
+    local left = n
+    for _, st in ipairs(stacksOf(id)) do
+      if left <= 0 or #targets >= maxSlots then break end
+      if st[3] <= left then
+        targets[#targets + 1] = { st[1], st[2] }
+        left = left - st[3]
+      else
+        local spot = table.remove(free, 1)
+        if not spot then BF.Print("|cffff5555Plus de place dans les sacs pour couper une pile.|r"); break end
+        local take = left
+        push(function() ClearCursor(); C_Container.SplitContainerItem(st[1], st[2], take)
+          C_Container.PickupContainerItem(spot[1], spot[2]) end)
+        targets[#targets + 1] = { spot[1], spot[2] }
+        left = 0
       end
     end
   end
-  if best then return best[1], best[2], best[3] end
-end
-
-local function fill(items, maxSlots, put)   -- put(index) dépose ce qui est sur le curseur
-  local index, used = 0, {}
-  for id, n in pairs(items) do
-    local left = n
-    while left > 0 and index < maxSlots do
-      local bag, slot, count = findStack(id, left, used)
-      if not bag then break end
-      used[bag * 100 + slot] = true
-      index = index + 1
-      local take = math.min(left, count)
-      local i = index
-      push(function()
-        ClearCursor()
-        if take < count then C_Container.SplitContainerItem(bag, slot, take)
-        else C_Container.PickupContainerItem(bag, slot) end
-        put(i)
-      end)
-      left = left - take
-    end
+  if #targets == 0 then return end
+  push(function() end)   -- le temps que les piles coupées arrivent
+  for i, t in ipairs(targets) do
+    push(function() ClearCursor(); C_Container.PickupContainerItem(t[1], t[2]); put(i) end)
   end
+  if done then push(done) end
 end
 
 -- Courrier ---------------------------------------------------------------------------------------
@@ -316,7 +330,18 @@ mf:SetScript("OnEvent", function(_, e)
       local body = "Demande : " .. Req.ItemsText(r.items):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
       if r.why then body = body .. "\nExplication : " .. r.why end
       if SendMailBodyEditBox then SendMailBodyEditBox:SetText(body .. "\n\nBonne journée de la part de Browz Forever !") end
-      fill(r.items, ATTACHMENTS_MAX_SEND or 12, function(i) ClickSendMailItemButton(i) end)
+      fill(r.items, ATTACHMENTS_MAX_SEND or 12, function(i) ClickSendMailItemButton(i) end, function()
+        local got = {}
+        for i = 1, (ATTACHMENTS_MAX_SEND or 12) do
+          local _, itemID, _, count = GetSendMailItem(i)
+          if itemID then got[itemID] = (got[itemID] or 0) + (count or 1) end
+        end
+        for id, n in pairs(r.items) do
+          if (got[id] or 0) ~= n then
+            BF.Print(("|cffff5555Vérifie le courrier :|r %s attendu, %d joint."):format(itemLabel(id, n), got[id] or 0))
+          end
+        end
+      end)
       prepared = r
       BF.Print(("Courrier pour %s pré-rempli : vérifie puis clique sur |cffffd100Envoyer|r."):format(short(r.who)))
     end)
@@ -533,6 +558,63 @@ end
 
 
 -- Listes « Mes demandes » et « Demandes de la guilde » ------------------------------------------------
+-- Fenêtre de détail d'une demande (clic sur une demande) -----------------------------------------------
+local detail
+local function statusLine(r)
+  local st = STATUS[r.status] or { r.status, "" }
+  return st[2] .. st[1] .. "|r" .. ((r.by and r.status ~= "attente" and r.status ~= "annulee") and (" par " .. short(r.by)) or "")
+end
+function Req.ShowDetail(r)
+  if not detail then
+    detail = CreateFrame("Frame", "BrowzForeverRequestDetail", UIParent, "BasicFrameTemplateWithInset")
+    detail:SetSize(360, 420); detail:SetPoint("CENTER", 0, 40); detail:SetFrameStrata("DIALOG")
+    detail:SetMovable(true); detail:EnableMouse(true); detail:RegisterForDrag("LeftButton")
+    detail:SetScript("OnDragStart", detail.StartMoving); detail:SetScript("OnDragStop", detail.StopMovingOrSizing)
+    detail.title = detail:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); detail.title:SetPoint("TOP", 0, -5)
+    detail.head = label(detail); detail.head:SetPoint("TOPLEFT", 16, -32); detail.head:SetPoint("RIGHT", -16, 0)
+    detail.head:SetWordWrap(true); detail.head:SetJustifyV("TOP")
+    detail.rows = {}
+    for i = 1, 8 do
+      local row = CreateFrame("Frame", nil, detail)
+      row:SetSize(328, 28); row:SetPoint("TOPLEFT", 16, -96 - (i - 1) * 30); row:EnableMouse(true)
+      row.icon = row:CreateTexture(nil, "ARTWORK"); row.icon:SetSize(26, 26); row.icon:SetPoint("LEFT")
+      row.count = row:CreateFontString(nil, "OVERLAY", "NumberFontNormal"); row.count:SetPoint("BOTTOMRIGHT", row.icon, 2, -2)
+      row.text = label(row); row.text:SetPoint("LEFT", row.icon, "RIGHT", 8, 0); row.text:SetPoint("RIGHT")
+      row:SetScript("OnEnter", function(self) if self.id then GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetItemByID(self.id); GameTooltip:Show() end end)
+      row:SetScript("OnLeave", GameTooltip_Hide)
+      detail.rows[i] = row
+    end
+    detail.why = label(detail); detail.why:SetPoint("TOPLEFT", 16, -342); detail.why:SetPoint("RIGHT", -16, 0)
+    detail.why:SetWordWrap(true)
+    detail.b1 = button(detail, "Accepter", 100, function() if detail.r then Req.Accept(detail.r) end end)
+    detail.b2 = button(detail, "Refuser", 100, function() if detail.r then Req.Refuse(detail.r) end end)
+    detail.b2:SetPoint("BOTTOMRIGHT", -12, 12); detail.b1:SetPoint("RIGHT", detail.b2, "LEFT", -6, 0)
+    Req.OnChange(function() if detail:IsShown() and detail.r then Req.ShowDetail(db()[detail.r.id] or detail.r) end end)
+  end
+  detail.r = r
+  detail.title:SetText("Demande de " .. short(r.who))
+  local when = date("%d/%m à %H:%M", r.t or 0)
+  local lines = { "Demandée le " .. when, "Statut : " .. statusLine(r) }
+  if r.at and r.at > 0 and r.status ~= "attente" then lines[#lines + 1] = "Décision le " .. date("%d/%m à %H:%M", r.at) end
+  detail.head:SetText(table.concat(lines, "\n"))
+  local ids = {}
+  for id in pairs(r.items) do ids[#ids + 1] = id end
+  table.sort(ids, function(a, b) return itemName(a) < itemName(b) end)
+  for i, row in ipairs(detail.rows) do
+    local id = ids[i]
+    row.id = id
+    if id then
+      row.icon:SetTexture(C_Item.GetItemIconByID(id)); row.count:SetText(r.items[id] > 1 and r.items[id] or "")
+      row.text:SetText(itemLabel(id, r.items[id])); row:Show()
+    else row:Hide() end
+  end
+  detail.why:SetText("|cffffd100Explication :|r " .. (r.why or "—"))
+  local canDecide = BF.IsOfficer() and r.status == "attente"
+  detail.b1:SetShown(canDecide); detail.b2:SetShown(canDecide)
+  detail:Show()
+end
+
 local function makeList(parent, n, withButtons)
   local rows = {}
   for i = 1, n do
@@ -543,6 +625,10 @@ local function makeList(parent, n, withButtons)
     r.bottom = label(r, "GameFontHighlightSmall"); r.bottom:SetPoint("BOTTOMLEFT", 6, 5); r.bottom:SetPoint("RIGHT", -190, 0)
     r.b1 = button(r, "", 88, function() if r.act1 then r.act1() end end); r.b1:SetPoint("RIGHT", -96, 0)
     r.b2 = button(r, "", 88, function() if r.act2 then r.act2() end end); r.b2:SetPoint("RIGHT", -4, 0)
+    r:EnableMouse(true)
+    r:SetScript("OnMouseUp", function(self) if self.r then Req.ShowDetail(self.r) end end)
+    r:SetScript("OnEnter", function(self) self.bg:SetColorTexture(1, 1, 1, 0.12) end)
+    r:SetScript("OnLeave", function(self) self.bg:SetColorTexture(1, 1, 1, i % 2 == 0 and 0.03 or 0.06) end)
     rows[i] = r
   end
   return rows
@@ -621,6 +707,8 @@ function Req.ShowSide()
       r.b1 = button(r, "Accepter", 80, function() if r.r then Req.Accept(r.r) end end); r.b1:SetPoint("BOTTOMRIGHT", -88, 4)
       r.b2 = button(r, "Refuser", 80, function() if r.r then Req.Refuse(r.r) end end); r.b2:SetPoint("BOTTOMRIGHT", -4, 4)
       r.st = label(r, "GameFontHighlightSmall"); r.st:SetPoint("BOTTOMLEFT", 6, 8)
+      r:EnableMouse(true)
+      r:SetScript("OnMouseUp", function(self) if self.r then Req.ShowDetail(self.r) end end)
       sideRows[i] = r
     end
     s.log = label(s, "GameFontHighlightSmall"); s.log:SetPoint("TOPLEFT", 16, -306); s.log:SetPoint("RIGHT", -16, 0)
@@ -630,7 +718,7 @@ function Req.ShowSide()
     Req.side = s
   end
   Req.side:ClearAllPoints()
-  Req.side:SetPoint("TOPLEFT", gb, "TOPRIGHT", 4, 0)
+  Req.side:SetPoint("TOPLEFT", gb, "TOPRIGHT", 48, 0)   -- à droite des icônes d'onglets du coffre
   Req.side:Show()
   Req.RefreshSide()
 end
@@ -659,19 +747,36 @@ end
 BF.commands["demandes"] = function() BF.OpenMain("demandes") end
 
 -- Demandes faites sur Discord ------------------------------------------------------------------------
--- Le PC d'un pont reçoit Inbox.lua (écrit par son client). Les ponts les annoncent à la guilde (« D ») ;
--- le joueur concerné (un de ses personnages) se voit proposer de les ajouter en jeu.
-local discordPending = {}   -- [id] = demande (statut « discord »), connue par Inbox.lua ou par un message « D »
-local asked = {}            -- demandes déjà proposées pendant cette session
+-- Le PC d'un pont reçoit Inbox.lua (écrit par son client) :
+--  * requests : demandes faites sur Discord pas encore en jeu. Déjà acceptées par un officier sur Discord →
+--    le pont les ajoute directement (acceptées) ; sinon il les annonce (« D ») et le joueur concerné les voit
+--    toutes dans une seule fenêtre (Tout ajouter / Tout supprimer / Plus tard).
+--  * decisions : Accepter / Refuser cliqués sur Discord pour des demandes déjà en jeu → appliqués par le pont.
+local discordPending = {}   -- [id] = demande (statut « discord »)
+local asked = {}
 
 local function loadInbox()
-  local inbox = _G.BrowzForeverInbox
-  for _, x in ipairs((inbox and inbox.requests) or {}) do
+  local inbox = _G.BrowzForeverInbox or {}
+  for _, x in ipairs(inbox.requests or {}) do
     if x.id and not db()[x.id] then
       local items = {}
       for id, n in pairs(x.items or {}) do items[tonumber(id)] = tonumber(n) end
-      discordPending[x.id] = { id = x.id, who = x.who, t = x.t or 0, items = items, why = x.why ~= "" and x.why or nil,
+      local r = { id = x.id, who = x.who, t = x.t or 0, items = items, why = x.why ~= "" and x.why or nil,
         status = "discord", upd = x.upd or x.t or 0 }
+      if x.decision == "acceptee" and x.by and x.by ~= "" then
+        r.status, r.by, r.at, r.upd = "acceptee", x.by, x.at or GetServerTime(), math.max(GetServerTime(), (r.upd or 0) + 1)
+        db()[r.id] = r
+        publish(r)
+        changed()
+      elseif x.decision ~= "refusee" then
+        discordPending[x.id] = r
+      end
+    end
+  end
+  for _, d in ipairs(inbox.decisions or {}) do
+    local r = d.id and db()[d.id]
+    if r and r.status == "attente" and (d.status == "acceptee" or d.status == "refusee") then
+      update(r, d.status, { by = d.by, at = d.at or GetServerTime() })
     end
   end
 end
@@ -689,45 +794,51 @@ local function isMine(who)
   return short(who) == short(BF.MyName())
 end
 
-local popupQueue = {}
-local function nextPopup()
-  if StaticPopup_Visible and StaticPopup_Visible("BROWZFOREVER_DISCORD_REQ") then return end
-  local r = table.remove(popupQueue, 1)
-  if not r then return end
-  if db()[r.id] then return nextPopup() end
-  local text = ("Demande faite sur Discord pour |cffffffff%s|r :\n\n%s%s\n\nL'ajouter en jeu pour que les officiers puissent l'accepter ?")
-    :format(short(r.who), Req.ItemsText(r.items, "\n"), r.why and ("\n« " .. r.why .. " »") or "")
-  StaticPopup_Show("BROWZFOREVER_DISCORD_REQ", text, nil, r)
+local waitingMine = {}
+local function addAll(status)
+  for _, r in ipairs(waitingMine) do
+    if not db()[r.id] then
+      r.status, r.upd = status, math.max(GetServerTime(), (r.upd or 0) + 1)
+      db()[r.id] = r
+      publish(r)
+    end
+  end
+  BF.Print(("%d demande(s) Discord %s."):format(#waitingMine, status == "attente" and "ajoutée(s) en jeu" or "supprimée(s)"))
+  wipe(waitingMine)
+  changed()
 end
 
 StaticPopupDialogs["BROWZFOREVER_DISCORD_REQ"] = {
   text = "%s",
-  button1 = "Ajouter", button2 = "Supprimer", button3 = "Plus tard",
-  OnAccept = function(_, r)
-    r.status, r.upd = "attente", math.max(GetServerTime(), (r.upd or 0) + 1)
-    db()[r.id] = r
-    publish(r); changed()
-    BF.Print("Demande Discord ajoutée en jeu : " .. Req.ItemsText(r.items))
-    C_Timer.After(0.5, nextPopup)
-  end,
-  OnCancel = function(_, r, reason)
-    if reason == "clicked" then
-      r.status, r.upd = "annulee", math.max(GetServerTime(), (r.upd or 0) + 1)
-      db()[r.id] = r
-      publish(r); changed()
-      BF.Print("Demande Discord supprimée.")
-    end
-    C_Timer.After(0.5, nextPopup)
-  end,
-  OnAlt = function() C_Timer.After(0.5, nextPopup) end,
+  button1 = "Tout ajouter", button2 = "Tout supprimer", button3 = "Plus tard",
+  OnAccept = function() addAll("attente") end,
+  OnCancel = function(_, _, reason) if reason == "clicked" then addAll("annulee") end end,
+  OnAlt = function() wipe(waitingMine) end,
   timeout = 0, whileDead = true, hideOnEscape = false, preferredIndex = 3,   -- Échap ne doit pas supprimer
 }
+
+local popupTimer
+local function showPopup()
+  popupTimer = nil
+  if #waitingMine == 0 then return end
+  local lines = {}
+  for i, r in ipairs(waitingMine) do
+    if i > 6 then lines[#lines + 1] = ("… et %d autre(s)"):format(#waitingMine - 6); break end
+    lines[#lines + 1] = ("• |cffffffff%s|r : %s%s"):format(short(r.who), Req.ItemsText(r.items),
+      r.why and (" — « " .. r.why .. " »") or "")
+  end
+  StaticPopup_Hide("BROWZFOREVER_DISCORD_REQ")
+  StaticPopup_Show("BROWZFOREVER_DISCORD_REQ",
+    ("Tu as %d demande(s) faite(s) sur Discord :\n\n%s\n\nLes ajouter en jeu pour que les officiers puissent les accepter ?")
+    :format(#waitingMine, table.concat(lines, "\n")))
+end
 
 local function offer(r)
   if asked[r.id] or db()[r.id] or not isMine(r.who) then return end
   asked[r.id] = true
-  popupQueue[#popupQueue + 1] = r
-  nextPopup()
+  waitingMine[#waitingMine + 1] = r
+  if popupTimer then popupTimer:Cancel() end
+  popupTimer = C_Timer.NewTimer(2, showPopup)   -- on attend un peu : une seule fenêtre pour toutes les demandes
 end
 
 BF.OnMessage("D", function(data)
@@ -739,8 +850,8 @@ end)
 BF.OnMessage("Q", function() C_Timer.After(1 + math.random() * 3, announce) end)
 
 BF.OnActive(function()
-  loadInbox()
   C_Timer.After(4, function()
+    loadInbox()
     for _, r in pairs(discordPending) do offer(r) end   -- mes propres demandes Discord (ce PC est un pont)
     announce()
     BF.Send("Q", "1")   -- « avez-vous des demandes Discord pour moi ? »
