@@ -117,3 +117,83 @@ BF.commands["testmetier"] = function()
   BF.Print(("Relevé enregistré (%d recette(s) d'exemple). Fais /reload pour que Claude puisse le lire."):format(#p.recipes))
   if #p.recipes == 0 then BF.Print("|cffff5555Aucune recette lue :|r ouvre d'abord la fenêtre d'un métier, puis relance /browz testmetier.") end
 end
+
+-- Relevé n° 2 : exigences et source des recettes, artisans de la guilde (sans addon), « qui connaît cette recette »
+BF.commands["testmetier2"] = function()
+  local p = { t = GetServerTime(), recipes = {}, guild = {}, api = {}, notes = {} }
+  for _, f in ipairs({ "C_TradeSkillUI.GetRecipeSourceText", "C_TradeSkillUI.GetRecipeDescription",
+    "ExpandGuildTradeSkillHeader", "CollapseGuildTradeSkillHeader", "GetGuildRecipeInfoPostQuery",
+    "GetGuildRecipeMember", "C_GuildInfo.GetGuildRecipeMember", "C_TradeSkillUI.GetProfessionSkillLineID",
+    "C_TradeSkillUI.GetProfessionInfoByRecipeID" }) do p.api[f] = has(f) end
+  local okB, base = pcall(C_TradeSkillUI.GetBaseProfessionInfo)
+  local skillLine = okB and base and base.professionID
+  local ids = C_TradeSkillUI.GetAllRecipeIDs and C_TradeSkillUI.GetAllRecipeIDs() or {}
+  -- quelques recettes apprises et non apprises
+  local picked, nL, nU = {}, 0, 0
+  for _, id in ipairs(ids) do
+    local info = C_TradeSkillUI.GetRecipeInfo(id)
+    if info then
+      if info.learned and nL < 3 then nL = nL + 1; picked[#picked + 1] = id
+      elseif not info.learned and nU < 4 then nU = nU + 1; picked[#picked + 1] = id end
+    end
+  end
+  for _, id in ipairs(picked) do
+    local info = C_TradeSkillUI.GetRecipeInfo(id)
+    local r = { id = id, name = info.name, learned = info.learned, trivial = info.maxTrivialLevel, diff = info.relativeDifficulty }
+    local okR, req = pcall(C_TradeSkillUI.GetRecipeRequirements, id)
+    if okR and type(req) == "table" then
+      local parts = {}
+      for _, q in ipairs(req) do parts[#parts + 1] = keys(q) end
+      r.requirements = table.concat(parts, " || ")
+    end
+    if has("C_TradeSkillUI.GetRecipeSourceText") then
+      local okS, src = pcall(C_TradeSkillUI.GetRecipeSourceText, id)
+      r.source = okS and tostring(src) or "erreur"
+    end
+    p.recipes[#p.recipes + 1] = r
+  end
+  -- artisans de la guilde : on déplie tout
+  if has("GetNumGuildTradeSkill") then
+    if has("ExpandGuildTradeSkillHeader") then
+      for i = 1, GetNumGuildTradeSkill() do
+        local skillID, isCollapsed = GetGuildTradeSkillInfo(i)
+        if skillID and isCollapsed then pcall(ExpandGuildTradeSkillHeader, skillID) end
+      end
+    end
+    local n = GetNumGuildTradeSkill() or 0
+    p.notes[#p.notes + 1] = "lignes de métiers de guilde après dépliage : " .. n
+    for i = 1, math.min(n, 25) do
+      p.guild[#p.guild + 1] = table.concat({ tostringall(GetGuildTradeSkillInfo(i)) }, ", ")
+    end
+  end
+  BrowzForeverDB.probe2 = p
+  -- qui connaît une recette apprise (réponse du serveur, même pour les membres sans addon)
+  local learnedID
+  for _, id in ipairs(ids) do local i = C_TradeSkillUI.GetRecipeInfo(id); if i and i.learned then learnedID = id end end
+  if skillLine and learnedID and C_GuildInfo and C_GuildInfo.QueryGuildMembersForRecipe then
+    local ev = CreateFrame("Frame")
+    ev:RegisterEvent("GUILD_RECIPE_KNOWN_BY_MEMBERS")
+    ev:SetScript("OnEvent", function(self)
+      self:UnregisterAllEvents()
+      local q = { recipe = learnedID, skillLine = skillLine }
+      if has("GetGuildRecipeInfoPostQuery") then q.post = table.concat({ tostringall(GetGuildRecipeInfoPostQuery()) }, ", ") end
+      local getM = (C_GuildInfo and C_GuildInfo.GetGuildRecipeMember) or _G.GetGuildRecipeMember
+      if getM then
+        q.members = {}
+        for i = 1, 10 do
+          local ok, a, b = pcall(getM, i)
+          if not ok or a == nil then break end
+          q.members[#q.members + 1] = type(a) == "table" and keys(a) or (tostring(a) .. ", " .. tostring(b))
+        end
+      end
+      BrowzForeverDB.probe2.query = q
+      BF.Print("Réponse « qui connaît cette recette » reçue. Fais /reload pour que Claude puisse lire le relevé.")
+    end)
+    local ok, err = pcall(C_GuildInfo.QueryGuildMembersForRecipe, skillLine, learnedID)
+    p.notes[#p.notes + 1] = "QueryGuildMembersForRecipe(" .. skillLine .. ", " .. learnedID .. ") : " .. (ok and "envoyé" or tostring(err))
+    C_Timer.After(5, function()
+      if not BrowzForeverDB.probe2.query then BF.Print("Pas de réponse du serveur à « qui connaît cette recette ». Fais /reload.") end
+    end)
+  end
+  BF.Print(("Relevé 2 enregistré (%d recette(s), %d ligne(s) d'artisans). Attends 5 s puis /reload."):format(#p.recipes, #p.guild))
+end
