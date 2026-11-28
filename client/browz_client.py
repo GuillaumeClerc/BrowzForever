@@ -109,7 +109,8 @@ def load_config():
         cfg = {"wow_path": DEFAULT_WOW, "bot_url": "", "cle_guilde": ""}
         save_json(CONFIG_PATH, cfg)
         log("config.json créé : renseigne bot_url et cle_guilde (mode test possible sans).")
-    if FROZEN and not (cfg.get("bot_url") and cfg.get("cle_guilde")):
+    # première fois, ou raccourci « Browz Forever - réglages » (exe lancé avec --config)
+    if FROZEN and (not (cfg.get("bot_url") and cfg.get("cle_guilde")) or "--config" in sys.argv):
         cfg = ask_config(cfg)
     return cfg
 
@@ -625,6 +626,7 @@ class ChatTail:
 class Sender:
     def __init__(self, cfg, state, test):
         self.cfg, self.state, self.test = cfg, state, test
+        self.bad_key = False       # le bot a refusé la clé : on redemandera la clé (fenêtre de réglages)
         self.pending = state.setdefault("en_attente", [])
 
     def push(self, kind, payload):
@@ -676,6 +678,13 @@ class Sender:
                 with urllib.request.urlopen(req, timeout=15) as r:
                     r.read()
                 self.pending.pop(0)
+            except urllib.error.HTTPError as e:
+                if e.code == 403:
+                    log("Le bot refuse la clé de pont (clé fausse ou retirée) : tape /browz cle sur Discord.")
+                    self.bad_key = True
+                else:
+                    log("Bot : erreur %s, nouvel essai plus tard." % e.code)
+                return
             except (urllib.error.URLError, OSError) as e:
                 log("Bot injoignable (%s) : nouvel essai plus tard, %d envoi(s) en attente." % (e, len(self.pending)))
                 return
@@ -807,6 +816,7 @@ def fetch_inbox(cfg):
 
 def main():
     test = "--test" in sys.argv
+    asked_key = False
     lock = single_instance()
     if lock is None:
         # un client tourne déjà : on lui demande de s'arrêter et on prend sa place (relancer l'exe = redémarrer
@@ -948,6 +958,10 @@ def main():
             except (OSError, ValueError) as e:
                 log("Lecture des SavedVariables impossible pour l'instant (%s)." % e)
         sender.flush()
+        if sender.bad_key and FROZEN and not asked_key:
+            asked_key = True          # une seule fois par lancement : la fenêtre ne revient pas en boucle
+            cfg.update(ask_config(cfg))
+            sender.bad_key = False
         if time.time() - state.get("maj_t", 0) > 6 * 3600:   # nouvelle version ? (toutes les 6 h)
             state["maj_t"] = time.time()
             check_update(lock)

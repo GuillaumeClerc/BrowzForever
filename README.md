@@ -31,7 +31,9 @@ membres connectés). **Plus il y a de ponts, mieux ça vit** : n'importe quel me
 1. Sur le Discord de la guilde, tape `/browz cle` : Browzer te donne ta **clé personnelle** (garde-la pour toi).
 2. Télécharge **BrowzClient.exe** et **Installer.bat** (page *Releases* du dépôt), mets-les dans le même dossier et
    lance **Installer.bat** : le client s'installe et se lancera tout seul à chaque démarrage du PC, sans fenêtre.
-3. Au premier lancement, une petite fenêtre demande l'adresse du bot (demande-la à Bellock) et ta clé.
+3. Au premier lancement, une petite fenêtre demande l'adresse du bot (donnée avec la clé, sinon demande-la à
+   Bellock) et ta clé. Pour les changer plus tard : raccourci **« Browz Forever - reglages »** sur le bureau (la
+   fenêtre revient aussi toute seule si le bot refuse ta clé).
 4. En jeu : `/browz pont on` (une seule fois).
 
 Les officiers voient les clés et leur dernière utilisation (`/browz cles`) et peuvent en retirer une (`/browz revoquer`).
