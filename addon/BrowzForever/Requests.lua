@@ -116,7 +116,17 @@ function Req.Accept(r)
   end
 end
 function Req.Refuse(r) update(r, "refusee", { by = BF.MyName(), at = GetServerTime() }) end
-function Req.Cancel(r) update(r, "annulee") end
+-- Annuler : le demandeur (tant que ce n'est pas livré) ou un officier (même après acceptation, en cas d'erreur)
+function Req.CanCancel(r)
+  if FINAL[r.status] then return false end
+  return r.who == BF.MyName() or BF.IsOfficer()
+end
+function Req.Cancel(r)
+  local withdrawn = r.status == "retiree"
+  update(r, "annulee", r.who ~= BF.MyName() and { by = BF.MyName() } or nil)
+  BF.Print(("Demande de %s annulée."):format(short(r.who))
+    .. (withdrawn and " |cffffd100Les objets sont déjà dans les sacs de l'officier : pense à les remettre au coffre.|r" or ""))
+end
 function Req.Delivered(r, how)
   update(r, "livree", { by = r.by or BF.MyName() })
   BF.Print(("Demande de %s livrée (%s)."):format(short(r.who), how))
@@ -201,7 +211,10 @@ function Req.WithdrawLog() return withdrawLog end
 -- Retire du coffre ce qui manque dans les sacs pour les demandes que j'ai acceptées.
 -- Toujours en posant la pile dans une case VIDE des sacs (comme un glisser-déposer) : sur Forever, le clic droit
 -- (rangement auto) échoue pour les piles venant d'autres royaumes (« impossible de combiner… »).
-function Req.Withdraw()
+-- attempt 1 : quantités exactes (une pile coupée si besoin) ; attempt 2 : seulement des piles entières (sur Forever,
+-- couper une pile venue d'un autre royaume peut être refusé) quitte à prendre un peu plus que demandé.
+function Req.Withdraw(attempt)
+  attempt = attempt or 1
   if not BF.Bank.IsReady() then return end
   local needs = {}   -- [id] = quantité à retirer
   local list = Req.List(function(r) return r.status == "acceptee" and r.by == BF.MyName() end)
@@ -211,27 +224,52 @@ function Req.Withdraw()
   for id, n in pairs(needs) do before[id] = bagCount(id); needs[id] = math.max(0, n - before[id]) end
   local free = freeBagSlots()
   for id, n in pairs(needs) do
-    local left = n
+    -- piles de cet objet dans le coffre
+    local stacks = {}
     for tab = 1, (GetNumGuildBankTabs() or 0) do
       for slot = 1, (MAX_GUILDBANK_SLOTS_PER_TAB or 98) do
-        if left <= 0 then break end
         local link = GetGuildBankItemLink(tab, slot)
         local _, count = GetGuildBankItemInfo(tab, slot)
         if link and count and count > 0 and C_Item.GetItemInfoInstant(link) == id then
-          local take = math.min(left, count)
-          left = left - take
-          push(function()
-            local spot = table.remove(free, 1)
-            if not spot then error("plus de place dans les sacs") end
-            if SetCurrentGuildBankTab then SetCurrentGuildBankTab(tab) end
-            ClearCursor()
-            if take >= count then PickupGuildBankItem(tab, slot) else SplitGuildBankItem(tab, slot, take) end
-            C_Container.PickupContainerItem(spot[1], spot[2])
-          end)
+          stacks[#stacks + 1] = { tab = tab, slot = slot, count = count }
         end
       end
     end
-    if left > 0 then BF.Print(("|cffff5555Il manque %d × %s dans la banque.|r"):format(left, itemName(id))) end
+    local left = n
+    local plan = {}   -- { pile, quantité }
+    if attempt == 1 then
+      table.sort(stacks, function(a, b) return a.count > b.count end)
+      for _, st in ipairs(stacks) do
+        if left <= 0 then break end
+        local take = math.min(left, st.count)
+        plan[#plan + 1] = { st, take }
+        left = left - take
+      end
+    else
+      -- piles entières : la plus petite qui suffit, sinon la plus grande et on continue
+      while left > 0 and #stacks > 0 do
+        table.sort(stacks, function(a, b) return a.count < b.count end)
+        local pick
+        for k, st in ipairs(stacks) do if st.count >= left then pick = k break end end
+        pick = pick or #stacks
+        local st = table.remove(stacks, pick)
+        plan[#plan + 1] = { st, st.count }
+        left = left - st.count
+      end
+    end
+    for _, p in ipairs(plan) do
+      local st, take = p[1], p[2]
+      push(function()
+        local spot = table.remove(free, 1)
+        if not spot then error("plus de place dans les sacs") end
+        if SetCurrentGuildBankTab then SetCurrentGuildBankTab(st.tab) end
+        ClearCursor()
+        if take >= st.count then PickupGuildBankItem(st.tab, st.slot) else SplitGuildBankItem(st.tab, st.slot, take) end
+        C_Container.PickupContainerItem(spot[1], spot[2])
+      end)
+      push(function() end)   -- le coffre refuse les actions trop rapprochées : une pause entre deux piles
+    end
+    if left > 0 and attempt == 1 then BF.Print(("|cffff5555Il manque %d × %s dans la banque.|r"):format(left, itemName(id))) end
   end
   push(function() end)   -- laisse au serveur le temps de répondre
   push(function()
@@ -242,6 +280,11 @@ function Req.Withdraw()
       if got > 0 then withdrawLog[#withdrawLog + 1] = ("Retiré %s"):format(itemLabel(id, got)) end
       if got < n then missing = true end
     end
+    if missing and attempt < 2 then
+      changed()
+      C_Timer.After(1.5, function() Req.Withdraw(attempt + 1) end)   -- 2e essai avec des piles entières
+      return
+    end
     for _, r in ipairs(list) do
       local all = true
       for id, n in pairs(r.items) do if bagCount(id) < n then all = false end end
@@ -249,8 +292,9 @@ function Req.Withdraw()
     end
     if missing then
       BF.Print("|cffff5555Le jeu n'a pas laissé l'addon tout retirer :|r glisse les objets manquants du coffre vers tes sacs.")
+    else
+      BF.Print("|cff33ff33Va à la boîte aux lettres : le courrier sera pré-rempli, tu n'auras plus qu'à cliquer sur Envoyer !|r")
     end
-    BF.Print("|cff33ff33Va à la boîte aux lettres : le courrier sera pré-rempli, tu n'auras plus qu'à cliquer sur Envoyer !|r")
     changed()
   end)
 end
@@ -695,6 +739,11 @@ function Req.ShowDetail(r)
   detail.why:SetText("|cffffd100Explication :|r " .. (r.why or "—"))
   local canDecide = BF.IsOfficer() and r.status == "attente"
   detail.b1:SetShown(canDecide); detail.b2:SetShown(canDecide)
+  if not detail.cancel then
+    detail.cancel = button(detail, "Annuler la demande", 150, function() if detail.r then Req.Cancel(detail.r) end end)
+    detail.cancel:SetPoint("BOTTOMLEFT", 12, 12)
+  end
+  detail.cancel:SetShown(Req.CanCancel(r) and not canDecide)
   detail:Show()
 end
 
@@ -737,14 +786,17 @@ local function fillRow(row, r, mode)
     row.bottom:SetText(statusText(r) .. "  ·  " .. when .. (r.why and ("  ·  « " .. r.why .. " »") or ""))
   end
   row.b1:Hide(); row.b2:Hide(); row.act1, row.act2 = nil, nil
-  if mode == "mine" and r.status == "attente" then
+  if mode == "mine" and Req.CanCancel(r) then
     row.b2:SetText("Annuler"); row.b2:Show(); row.act2 = function() Req.Cancel(r) end
   elseif mode == "guild" and BF.IsOfficer() then
     if r.status == "attente" then
       row.b1:SetText("Accepter"); row.b1:Show(); row.act1 = function() Req.Accept(r) end
       row.b2:SetText("Refuser"); row.b2:Show(); row.act2 = function() Req.Refuse(r) end
-    elseif mineToDeliver(r) then
-      row.b2:SetText("Livrée"); row.b2:Show(); row.act2 = function() Req.Delivered(r, "marquée à la main") end
+    elseif Req.CanCancel(r) then
+      if mineToDeliver(r) then
+        row.b1:SetText("Livrée"); row.b1:Show(); row.act1 = function() Req.Delivered(r, "marquée à la main") end
+      end
+      row.b2:SetText("Annuler"); row.b2:Show(); row.act2 = function() Req.Cancel(r) end
     end
   end
 end
@@ -788,7 +840,10 @@ function Req.ShowSide()
       r.top = label(r); r.top:SetPoint("TOPLEFT", 6, -4); r.top:SetPoint("RIGHT", -6, 0)
       r.mid = label(r, "GameFontHighlightSmall"); r.mid:SetPoint("TOPLEFT", 6, -20); r.mid:SetPoint("RIGHT", -6, 0)
       r.b1 = button(r, "Accepter", 80, function() if r.r then Req.Accept(r.r) end end); r.b1:SetPoint("BOTTOMRIGHT", -88, 4)
-      r.b2 = button(r, "Refuser", 80, function() if r.r then Req.Refuse(r.r) end end); r.b2:SetPoint("BOTTOMRIGHT", -4, 4)
+      r.b2 = button(r, "Refuser", 80, function()
+        if not r.r then return end
+        if r.r.status == "attente" then Req.Refuse(r.r) else Req.Cancel(r.r) end
+      end); r.b2:SetPoint("BOTTOMRIGHT", -4, 4)
       r.st = label(r, "GameFontHighlightSmall"); r.st:SetPoint("BOTTOMLEFT", 6, 8)
       r:EnableMouse(true)
       r:SetScript("OnMouseUp", function(self) if self.r then Req.ShowDetail(self.r) end end)
@@ -817,6 +872,9 @@ function Req.RefreshSide()
       row.mid:SetText(r.why and ("« " .. r.why .. " »") or "")
       local pending = r.status == "attente"
       row.b1:SetShown(pending); row.b2:SetShown(pending)
+      if not pending then          -- acceptée : on peut encore l'annuler en cas d'erreur
+        row.b2:SetText("Annuler"); row.b2:Show()
+      else row.b2:SetText("Refuser") end
       row.st:SetText(pending and "" or statusText(r))
       row:Show()
     else row:Hide() end
