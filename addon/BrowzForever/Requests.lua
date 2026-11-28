@@ -421,7 +421,7 @@ for i, d in ipairs(defs) do
 end
 local howTo = label(panel, "GameFontDisableSmall")
 howTo:SetPoint("BOTTOMLEFT", 22, 14)
-howTo:SetText("Pour demander un objet : onglet |cffffd100Banque|r, clic droit sur l'objet → « Faire une demande ».")
+howTo:SetText("Pour demander un objet : onglet |cffffd100Banque|r, clic droit sur l'objet, puis « Faire une demande ».")
 
 local function bankTotals()
   local tot, bank = {}, BF.Bank.Get()
