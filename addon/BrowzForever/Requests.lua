@@ -420,6 +420,12 @@ local function fill(items, maxSlots, put, done)   -- put(index) dépose ce qui e
   if done then push(done) end
 end
 
+Req.Fill = fill                                   -- réutilisé par les commandes de craft (Orders.lua)
+function Req.HasDelivery() return Req.List(function(x) return mineToDeliver(x) end)[1] ~= nil end
+function Req.HasDeliveryFor(name)
+  return Req.List(function(x) return mineToDeliver(x) and short(x.who) == name end)[1] ~= nil
+end
+
 -- Courrier ---------------------------------------------------------------------------------------
 local prepared   -- demande dont le courrier est préparé
 local mf = CreateFrame("Frame")

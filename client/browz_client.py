@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-CLIENT_VERSION = 14                             # à publier sur GitHub avec l'étiquette « client-v14 »
+CLIENT_VERSION = 15                             # à publier sur GitHub avec l'étiquette « client-v15 »
 UPDATE_URL = "https://api.github.com/repos/GuillaumeClerc/BrowzForever/releases?per_page=20"
 FROZEN = getattr(sys, "frozen", False)          # True dans BrowzClient.exe (PyInstaller)
 HERE = os.path.dirname(sys.executable if FROZEN else os.path.abspath(__file__))
@@ -432,6 +432,31 @@ def parse_request(s):
         return None
 
 
+def parse_order(s):
+    """Commande de craft : 1^id^demandeur^heure^métier^recette^quantité^explication^statut^artisan^commission^modif^note"""
+    f = s.split("^")
+    if len(f) < 12 or f[0] != "1":
+        return None
+    try:
+        return {"id": f[1], "who": f[2], "t": int(f[3] or 0), "prof": int(f[4] or 0), "recipe": int(f[5] or 0),
+                "qty": int(f[6] or 1), "why": f[7].strip() or None, "status": f[8], "crafter": f[9].strip() or None,
+                "fee": int(f[10] or 0), "upd": int(f[11] or 0), "note": (f[12].strip() or None) if len(f) > 12 else None}
+    except ValueError:
+        return None
+
+
+def parse_crafter(s):
+    """Recettes apprises : 1^nom^métier^niveau^heure^id;id…"""
+    f = s.split("^")
+    if len(f) < 6 or f[0] != "1":
+        return None
+    try:
+        return {"name": f[1], "prof": int(f[2] or 0), "s": int(f[3] or 0), "t": int(f[4] or 0),
+                "ids": [int(x) for x in f[5].split(";") if x.isdigit()]}
+    except ValueError:
+        return None
+
+
 def parse_layout(s):
     """Forme d'un arbre de talents : 1^clé^spé^nœud;nœud… (nœud = id,x,y,max,type,liens/…,sort[p]/…)"""
     f = s.split("^")
@@ -555,6 +580,14 @@ class ChatTail:
                     lay = parse_layout(full)
                     if lay:
                         out.append(("T", lay))
+                elif kind == "O":
+                    order = parse_order(full)
+                    if order:
+                        out.append(("O", order))
+                elif kind == "W":
+                    cr = parse_crafter(full)
+                    if cr:
+                        out.append(("W", cr))
         self.state["vus"] = list(self.seen)[-500:]
         self.state["morceaux"] = {"%s|%s" % k: {"n": v["n"], "got": {str(i): d for i, d in v["got"].items()}}
                                   for k, v in list(self.parts.items())[-50:]}
@@ -786,6 +819,12 @@ def main():
         lays = {x["key"]: x for k, x in found if k == "T"}
         if lays:
             sender.push("layouts", lays)
+        orders = {x["id"]: x for k, x in found if k == "O"}
+        if orders:
+            sender.push("orders", orders)
+        crafts = ["%s|%d" % (x["name"], x["prof"]) for k, x in found if k == "W"]
+        if crafts:
+            sender.push("crafters", {key: x for key, x in zip(crafts, [x for k, x in found if k == "W"])})
         # 2) SavedVariables (après /reload, déconnexion ou sortie du jeu)
         sv_path = sv_path or find_savedvars(wow)
         if sv_path and os.path.getmtime(sv_path) > sv_mtime:
@@ -828,6 +867,31 @@ def main():
                         lays[lay["key"]] = lay
                 if lays:   # renvoyés à chaque lecture (quelques Ko) : le bot les a toujours
                     sender.push("layouts", lays)
+                orders = {}
+                for _, it in (db.get("orders") or {}).items():
+                    if isinstance(it, dict) and it.get("id"):
+                        orders[it["id"]] = {"id": it["id"], "who": it.get("who"), "t": it.get("t") or 0,
+                                            "prof": it.get("prof") or 0, "recipe": it.get("recipe") or 0,
+                                            "qty": it.get("qty") or 1, "why": it.get("why"), "status": it.get("status"),
+                                            "crafter": it.get("crafter"), "fee": it.get("fee") or 0,
+                                            "upd": it.get("upd") or 0, "note": it.get("note")}
+                if orders:
+                    sender.push("orders", orders)
+                crafts = {}
+                for name, c in (db.get("crafters") or {}).items():
+                    if not isinstance(c, dict):
+                        continue
+                    for prof, p in (c.get("profs") or {}).items():
+                        if isinstance(p, dict):
+                            ids = [int(x) for x in str(p.get("ids") or "").split(";") if x.isdigit()]
+                            crafts["%s|%s" % (name, prof)] = {"name": name, "prof": int(prof), "s": p.get("s") or 0,
+                                                              "t": p.get("t") or 0, "ids": ids}
+                if crafts:
+                    sender.push("crafters", crafts)
+                gprofs = db.get("guildProfs") or {}
+                if isinstance(gprofs, dict) and gprofs:
+                    sender.push("guild_profs", {n: [int(k) for k in (v or {}).keys() if str(k).isdigit()]
+                                                for n, v in gprofs.items() if isinstance(v, dict)})
                 roster = db.get("roster")
                 if isinstance(roster, dict) and isinstance(roster.get("members"), dict):
                     sender.push("roster", {"t": roster.get("t"), "members": roster["members"]})

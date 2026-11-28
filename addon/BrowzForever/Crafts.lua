@@ -61,7 +61,11 @@ local function publish(prof)
   local me = BF.MyName()
   local c = crafters()[me]
   local p = c and c.profs[prof]
-  if p then BF.Send("W", serialize(me, prof, p)) end
+  if p then
+    local data = serialize(me, prof, p)
+    BF.Send("W", data)
+    if BF.Bridge.IsOn() then BF.Bridge.Emit("W", data) end
+  end
 end
 
 local function scanOpen()
@@ -115,6 +119,7 @@ BF.OnMessage("W", function(data)
   c.profs[prof] = { s = s, ids = ids or "", t = t }
   c.t = math.max(c.t or 0, t or 0)
   crafters()[name] = c
+  if BF.Bridge.IsOn() then BF.Bridge.Emit("W", data) end
   changed()
 end)
 
@@ -231,6 +236,22 @@ function Craft.CraftersFor(prof, id)
   return out
 end
 
+-- Ce personnage peut-il fabriquer cette recette ? (recette lue, sinon supposée par le niveau)
+function Craft.CanCraft(name, prof, id)
+  for _, w in ipairs(Craft.CraftersFor(prof, id)) do
+    if w.name == name and w.kind ~= "metier" then return true, w.kind end
+  end
+  return false
+end
+function Craft.RecipeName(prof, id)
+  local L = Craft.Lib()
+  return (L and L:GetName(prof, id)) or ("recette " .. tostring(id))
+end
+function Craft.CraftedItem(prof, id)
+  local L = Craft.Lib()
+  return L and L:GetCraftedItemID(prof, id)
+end
+
 -- Métiers présents dans la guilde (au moins un artisan connu)
 function Craft.GuildProfessions()
   local profs = {}
@@ -275,6 +296,13 @@ function Craft.Search(text, limit)
     return a.name < b.name
   end)
   if q == "" then
+    -- sans recherche : seulement les artisans dont on connaît le niveau (un membre « niveau inconnu » ferait
+    -- remonter toutes les recettes de maître de son métier)
+    local known = {}
+    for _, r in ipairs(out) do
+      for _, w in ipairs(r.who) do if w.kind ~= "metier" then known[#known + 1] = r; break end end
+    end
+    out = known
     -- haut du panier : pour chaque métier, les recettes à 25 points ou moins du plus haut niveau atteint
     local top = {}
     for _, r in ipairs(out) do top[r.prof] = math.max(top[r.prof] or 0, r.need) end
@@ -314,25 +342,29 @@ end
 -- Onglet Craft ------------------------------------------------------------------------------------
 local panel = BF.CraftPanel
 if not panel then return end
+-- Deux vues dans l'onglet : « Recettes » (ici) et « Commandes » (Orders.lua)
+local view = CreateFrame("Frame", nil, panel)
+view:SetAllPoints(panel)
+Craft.RecipesView = view
 
 local LIST_W, ROW_H, ROWS = 300, 20, 12
 local selected, results = nil, {}
 
-local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+local title = view:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
 title:SetPoint("TOPLEFT", 20, -32); title:SetText("Recettes de la guilde")
 
-local search = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+local search = CreateFrame("EditBox", nil, view, "InputBoxTemplate")
 search:SetSize(LIST_W - 10, 20); search:SetPoint("TOPLEFT", 26, -56)
 search:SetAutoFocus(false)
 search.hint = search:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 search.hint:SetPoint("LEFT", 4, 0); search.hint:SetText("Rechercher une recette (ex. « rouage »)")
 
-local info = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+local info = view:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
 info:SetPoint("TOPLEFT", 20, -80); info:SetWidth(LIST_W); info:SetJustifyH("LEFT")
 
 local rows = {}
 for i = 1, ROWS do
-  local r = CreateFrame("Button", nil, panel)
+  local r = CreateFrame("Button", nil, view)
   r:SetSize(LIST_W, ROW_H)
   r:SetPoint("TOPLEFT", 20, -96 - (i - 1) * ROW_H)
   r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
@@ -346,27 +378,24 @@ for i = 1, ROWS do
   rows[i] = r
 end
 
-local scroll = CreateFrame("Slider", nil, panel, "UIPanelScrollBarTemplate")
+local scroll = CreateFrame("Slider", nil, view, "UIPanelScrollBarTemplate")
 scroll:SetPoint("TOPLEFT", rows[1], "TOPRIGHT", 4, -16)
 scroll:SetPoint("BOTTOMLEFT", rows[ROWS], "BOTTOMRIGHT", 4, 16)
 scroll:SetMinMaxValues(0, 0); scroll:SetValueStep(1); scroll:SetObeyStepOnDrag(true); scroll:SetValue(0)
 
 -- Détail à droite
 local DX = LIST_W + 48
-local dTitle = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+local dTitle = view:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 dTitle:SetPoint("TOPLEFT", DX, -58); dTitle:SetPoint("RIGHT", -16, 0); dTitle:SetJustifyH("LEFT")
-local dText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+local dText = view:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 dText:SetPoint("TOPLEFT", dTitle, "BOTTOMLEFT", 0, -8); dText:SetPoint("RIGHT", -16, 0)
 dText:SetJustifyH("LEFT"); dText:SetJustifyV("TOP"); dText:SetSpacing(2)
-local craftBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+local craftBtn = CreateFrame("Button", nil, view, "UIPanelButtonTemplate")
 craftBtn:SetSize(170, 22); craftBtn:SetPoint("BOTTOMRIGHT", -16, 14)
 craftBtn:SetText("Demander ce craft"); craftBtn:Disable()
-craftBtn:SetMotionScriptsWhileDisabled(true)
-craftBtn:SetScript("OnEnter", function(self)
-  GameTooltip:SetOwner(self, "ANCHOR_TOP"); GameTooltip:SetText("Bientôt")
-  GameTooltip:AddLine("Les demandes de craft arrivent à l'étape suivante.", 1, 1, 1, true); GameTooltip:Show()
+craftBtn:SetScript("OnClick", function()
+  if selected and BF.Orders then BF.Orders.OpenNew(selected.prof, selected.id) end
 end)
-craftBtn:SetScript("OnLeave", GameTooltip_Hide)
 
 local function itemName(iid)
   local n = C_Item.GetItemInfo(iid)
@@ -378,6 +407,7 @@ local function short(name) return (name or ""):match("^[^-]+") or name end
 
 local function showDetail()
   local r = selected
+  craftBtn:SetEnabled(r ~= nil and BF.Orders ~= nil)
   if not r then
     dTitle:SetText("")
     dText:SetText("|cffaaaaaaChoisis une recette dans la liste.\n\nSans recherche, seules les recettes de plus haut niveau " ..
@@ -424,7 +454,7 @@ local function refreshRows()
 end
 
 function Craft.Refresh()
-  if not panel:IsShown() then return end
+  if not view:IsVisible() then return end
   if not Craft.Lib() then
     results = {}
     info:SetText("|cffff5555L'addon « ProfessionDB » (LibProfessionDB) n'est pas installé ou pas activé.|r")
@@ -448,8 +478,8 @@ for _, row in ipairs(rows) do
   row:SetScript("OnLeave", GameTooltip_Hide)
 end
 scroll:SetScript("OnValueChanged", refreshRows)
-panel:EnableMouseWheel(true)
-panel:SetScript("OnMouseWheel", function(_, d) scroll:SetValue(scroll:GetValue() - d * 3) end)
+view:EnableMouseWheel(true)
+view:SetScript("OnMouseWheel", function(_, d) scroll:SetValue(scroll:GetValue() - d * 3) end)
 search:SetScript("OnTextChanged", function(self)
   self.hint:SetShown(self:GetText() == "")
   scroll:SetValue(0)
@@ -457,6 +487,7 @@ search:SetScript("OnTextChanged", function(self)
 end)
 search:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
 search:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+view:HookScript("OnShow", Craft.Refresh)
 panel:HookScript("OnShow", Craft.Refresh)
 Craft.OnChange(Craft.Refresh)
 if BF.Bank and BF.Bank.OnChange then BF.Bank.OnChange(Craft.Refresh) end
@@ -464,7 +495,7 @@ local itemFrame = CreateFrame("Frame")
 itemFrame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
 local itemPending
 itemFrame:SetScript("OnEvent", function()
-  if itemPending or not panel:IsShown() then return end
+  if itemPending or not view:IsVisible() then return end
   itemPending = true
   C_Timer.After(0.3, function() itemPending = false; showDetail() end)
 end)
