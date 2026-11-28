@@ -275,20 +275,37 @@ function Req.Withdraw()
         end)
         push(function() end)   -- le coffre refuse les actions trop rapprochées : une pause entre deux piles
         if i == cut then
-          push(function() end)   -- la pile doit être arrivée dans le sac avant de la couper
+          -- 1) la pile doit être arrivée dans le sac ; 2) on coupe le surplus dans une autre case vide du sac
+          --    (une coupe reste « en attente » tant que le serveur ne l'a pas posée : la déposer directement au
+          --    coffre ne marche pas) ; 3) on dépose cette petite pile entière dans la case libérée du coffre.
+          local spare
+          push(function() end)
           push(function()
             if not spot then return end
-            if SetCurrentGuildBankTab then SetCurrentGuildBankTab(st.tab) end
+            spare = table.remove(free, 1)
+            if not spare then error("plus de place dans les sacs pour recouper le surplus") end
             ClearCursor()
             C_Container.SplitContainerItem(spot[1], spot[2], extra)
-            if CursorHasItem() then
-              PickupGuildBankItem(st.tab, st.slot)
-              BF.Print(("Remis au coffre : %d × %s (surplus)"):format(extra, itemName(id)))
+            C_Container.PickupContainerItem(spare[1], spare[2])
+          end)
+          push(function() end)
+          push(function()
+            if not spare then return end
+            if SetCurrentGuildBankTab then SetCurrentGuildBankTab(st.tab) end
+            ClearCursor()
+            C_Container.PickupContainerItem(spare[1], spare[2])
+            if CursorHasItem() then PickupGuildBankItem(st.tab, st.slot) end
+            ClearCursor()
+          end)
+          push(function() end); push(function() end)   -- le coffre met un moment à se rafraîchir
+          push(function()
+            local _, count = GetGuildBankItemInfo(st.tab, st.slot)
+            if count and count > 0 then
+              BF.Print(("Remis au coffre : %d × %s (surplus)"):format(count, itemName(id)))
             else
-              BF.Print(("|cffff5555Impossible de recouper la pile :|r %d × %s en trop dans tes sacs."):format(extra, itemName(id)))
+              BF.Print(("|cffff5555Le surplus n'a pas pu être remis :|r %d × %s dans tes sacs, glisse-les au coffre."):format(extra, itemName(id)))
             end
           end)
-          push(function() ClearCursor() end)
         end
       end
     end
