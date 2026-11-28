@@ -536,6 +536,28 @@ function Req.RefreshCart()
 end
 cw:SetScript("OnShow", Req.RefreshCart)
 
+-- Met un lien dans la zone de saisie du chat, en l'ouvrant si besoin (les fonctions ont changé de nom
+-- selon les versions du jeu : on essaie les unes après les autres)
+function BF.InsertChatLink(link)
+  local CFU = _G.ChatFrameUtil
+  local getActive = (CFU and CFU.GetActiveWindow) or _G.ChatEdit_GetActiveWindow
+  local box = getActive and getActive()
+  if box and box:IsShown() then box:Insert(link); return end
+  local open = (CFU and CFU.OpenChat) or _G.ChatFrame_OpenChat
+  if open and pcall(open, link) then
+    box = getActive and getActive()
+    if box and box:IsShown() then return end
+  end
+  -- dernier recours : la zone de saisie de la fenêtre de chat principale
+  local frame = _G.SELECTED_CHAT_FRAME or _G.DEFAULT_CHAT_FRAME
+  box = frame and (frame.editBox or _G[frame:GetName() .. "EditBox"])
+  if box then
+    box:Show(); box:SetFocus(); box:Insert(link)
+  else
+    BF.Print("Impossible d'ouvrir le chat : appuie sur Entrée puis Maj+clic sur l'objet.")
+  end
+end
+
 -- Clics sur les objets de l'onglet Banque (UI.lua) : clic droit = menu, clic gauche = +1 si une demande est ouverte
 function BF.OnBankItemClick(owner, mouse, id)
   if not id then return false end
@@ -545,8 +567,14 @@ function BF.OnBankItemClick(owner, mouse, id)
         root:CreateTitle(itemName(id))
         root:CreateButton("Faire une demande", function() Req.CartAdd(id, 1) end)
         root:CreateButton("Lien dans le chat", function()
+          -- ouvre la zone de saisie du chat (Guilde si on y écrivait déjà…) avec le lien de l'objet
           local _, link = C_Item.GetItemInfo(id)
-          if link then ChatEdit_InsertLink(link) end
+          if not link then
+            if C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(id) end
+            BF.Print("Objet pas encore chargé par le jeu : réessaie dans une seconde.")
+            return
+          end
+          C_Timer.After(0.05, function() BF.InsertChatLink(link) end)   -- après la fermeture du menu
         end)
       end)
     else

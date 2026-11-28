@@ -93,13 +93,17 @@ local function itemClick(owner, mouse, id)
   if BF.OnBankItemClick and BF.OnBankItemClick(owner, mouse, id) then return end
   if IsModifiedClick("CHATLINK") then
     local _, link = C_Item.GetItemInfo(id)
-    if link then ChatEdit_InsertLink(link) end
+    if link then
+      if BF.InsertChatLink then BF.InsertChatLink(link) else ChatEdit_InsertLink(link) end
+    end
   end
 end
 local function chatLink(id)
   if IsModifiedClick("CHATLINK") then
     local _, link = C_Item.GetItemInfo(id)
-    if link then ChatEdit_InsertLink(link) end
+    if link then
+      if BF.InsertChatLink then BF.InsertChatLink(link) else ChatEdit_InsertLink(link) end
+    end
   end
 end
 
