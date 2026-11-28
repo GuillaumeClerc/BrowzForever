@@ -14,3 +14,11 @@ __pycache__/
 
 # le bot reste privé (dossier Documents\BrowzBot + Wispbyte)
 bot/
+
+# client pont : fabrication de l exe et journaux
+build/
+dist/
+*.spec
+*.exe
+*.log
+*.log.old

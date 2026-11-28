@@ -27,14 +27,9 @@ local function paragraph(parent, text, x, y, width)
   return fs
 end
 
--- Demandes (à venir)
+-- Demandes de retrait : rempli par Requests.lua
 local demandes = newPanel()
-heading(demandes, "Demandes de retrait", 20, -36)
-paragraph(demandes, "Bientôt ici :\n\n" ..
-  "• Passer en |cffffd100mode demande|r depuis la banque, cocher un ou plusieurs objets et envoyer la demande.\n" ..
-  "• Les officiers connectés reçoivent une notification en jeu et acceptent ou refusent d'un clic.\n" ..
-  "• Si aucun officier n'est en ligne, la demande part sur Discord (salon #officier).\n" ..
-  "• La liste de tes demandes et leur statut (en attente, acceptée, refusée).", 20, -66)
+BF.DemandesPanel = demandes
 
 -- Craft (à venir)
 local craft = newPanel()

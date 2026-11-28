@@ -8,6 +8,7 @@ et envoie le tout au bot. Python standard uniquement, rien à installer.
 
 Lancement :  python browz_client.py            (normal)
              python browz_client.py --test     (affiche ce qui serait envoyé, sans rien envoyer)
+             BrowzClient.exe                   (version sans Python, sans fenêtre, lancée avec Windows)
 """
 import json
 import os
@@ -15,17 +16,36 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+CLIENT_VERSION = 12                             # à publier sur GitHub avec l'étiquette « client-v12 »
+UPDATE_URL = "https://api.github.com/repos/GuillaumeClerc/BrowzForever/releases?per_page=20"
+FROZEN = getattr(sys, "frozen", False)          # True dans BrowzClient.exe (PyInstaller)
+HERE = os.path.dirname(sys.executable if FROZEN else os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
 STATE_PATH = os.path.join(HERE, "etat.json")
 DEFAULT_WOW = r"C:\Program Files (x86)\World of Warcraft\_forever_"
 POLL_SECONDS = 3
 
 
+LOG_PATH = os.path.join(HERE, "browz_client.log")
+
+
 def log(msg):
-    print(time.strftime("%H:%M:%S"), msg, flush=True)
+    line = "%s %s" % (time.strftime("%d/%m %H:%M:%S"), msg)
+    if sys.stdout:
+        try:
+            print(line, flush=True)
+        except (OSError, ValueError):
+            pass
+    try:   # journal sur disque (l'exe n'a pas de fenêtre) ; on repart à zéro au-delà de 1 Mo
+        if os.path.exists(LOG_PATH) and os.path.getsize(LOG_PATH) > 1_000_000:
+            os.replace(LOG_PATH, LOG_PATH + ".old")
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------- configuration / état
@@ -44,13 +64,113 @@ def save_json(path, data):
     os.replace(tmp, path)
 
 
+def ask_config(cfg):
+    """Première installation de l'exe : petite fenêtre pour l'adresse du bot, la clé et le dossier de WoW."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except ImportError:
+        return cfg
+    root = tk.Tk()
+    root.title("Browz Forever — client pont")
+    root.resizable(False, False)
+    tk.Label(root, text="Ces informations te sont données par Bellock (en privé).", pady=6).grid(row=0, columnspan=3)
+    fields = {}
+    for i, (key, label) in enumerate((("bot_url", "Adresse du bot"), ("cle_guilde", "Clé de guilde"),
+                                       ("wow_path", "Dossier de WoW Forever")), start=1):
+        tk.Label(root, text=label).grid(row=i, column=0, sticky="w", padx=8, pady=3)
+        v = tk.StringVar(value=cfg.get(key) or (DEFAULT_WOW if key == "wow_path" else ""))
+        tk.Entry(root, textvariable=v, width=52, show="•" if key == "cle_guilde" else "").grid(row=i, column=1, padx=4)
+        fields[key] = v
+    tk.Button(root, text="…", command=lambda: fields["wow_path"].set(
+        filedialog.askdirectory(initialdir=fields["wow_path"].get()) or fields["wow_path"].get())).grid(row=3, column=2, padx=4)
+    done = {"ok": False}
+
+    def ok():
+        done["ok"] = True
+        root.destroy()
+    tk.Button(root, text="Enregistrer", command=ok, width=16).grid(row=4, columnspan=3, pady=10)
+    root.mainloop()
+    if done["ok"]:
+        for k, v in fields.items():
+            cfg[k] = v.get().strip()
+        save_json(CONFIG_PATH, cfg)
+    return cfg
+
+
 def load_config():
     cfg = load_json(CONFIG_PATH, None)
     if cfg is None:
         cfg = {"wow_path": DEFAULT_WOW, "bot_url": "", "cle_guilde": ""}
         save_json(CONFIG_PATH, cfg)
         log("config.json créé : renseigne bot_url et cle_guilde (mode test possible sans).")
+    if FROZEN and not (cfg.get("bot_url") and cfg.get("cle_guilde")):
+        cfg = ask_config(cfg)
     return cfg
+
+
+# ---------------------------------------------------------------- mise à jour automatique (exe seulement)
+# Le client regarde les « Releases » du dépôt GitHub : s'il y trouve une version plus récente (étiquette
+# « client-vNN » avec un fichier BrowzClient.exe), il la télécharge, prend sa place et redémarre tout seul.
+def check_update(lock):
+    if not FROZEN:
+        return
+    try:
+        req = urllib.request.Request(UPDATE_URL, headers={"User-Agent": "BrowzClient", "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            releases = json.loads(r.read().decode("utf-8"))
+    except (urllib.error.URLError, OSError, ValueError):
+        return
+    best, url = CLIENT_VERSION, None
+    for rel in releases if isinstance(releases, list) else []:
+        m = re.match(r"^client-v(\d+)$", str(rel.get("tag_name", "")))
+        if not m or rel.get("draft") or rel.get("prerelease") or int(m.group(1)) <= best:
+            continue
+        asset = next((a for a in rel.get("assets", []) if a.get("name") == "BrowzClient.exe"), None)
+        if asset:
+            best, url = int(m.group(1)), asset.get("browser_download_url")
+    if not url or not url.startswith("https://github.com/GuillaumeClerc/BrowzForever/"):
+        return
+    exe = sys.executable
+    new, old = exe + ".new", exe + ".old"
+    try:
+        log("Nouvelle version du client (v%d) : téléchargement…" % best)
+        req = urllib.request.Request(url, headers={"User-Agent": "BrowzClient"})
+        with urllib.request.urlopen(req, timeout=120) as r, open(new, "wb") as f:
+            f.write(r.read())
+        with open(new, "rb") as f:
+            if f.read(2) != b"MZ" or os.path.getsize(new) < 1_000_000:
+                raise OSError("fichier téléchargé invalide")
+        if os.path.exists(old):
+            os.remove(old)
+        os.replace(exe, old)          # Windows permet de renommer un exe en cours d'exécution
+        os.replace(new, exe)
+    except OSError as e:
+        log("Mise à jour impossible (%s) : on garde la version %d." % (e, CLIENT_VERSION))
+        try:
+            if os.path.exists(new):
+                os.remove(new)
+        except OSError:
+            pass
+        return
+    log("Client mis à jour en v%d : redémarrage." % best)
+    import subprocess
+    if lock:
+        lock.close()
+    subprocess.Popen([exe], cwd=HERE, close_fds=True)
+    os._exit(0)
+
+
+def single_instance():
+    """Un seul client à la fois (lancé avec Windows ET à la main, par exemple)."""
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", 47321))
+        s.listen(1)
+        return s          # garder la référence : le port reste pris tant que le client tourne
+    except OSError:
+        return None
 
 
 # ---------------------------------------------------------------- lecture des SavedVariables
@@ -256,6 +376,23 @@ def parse_card(s):
             "gear": gear, "alts": [a for a in f[12].split("&") if a], "sets": sets, "talents": talents}
 
 
+def parse_request(s):
+    """Demande de retrait : 1^id^demandeur^heure^id,n;…^explication^statut^officier^décision^modif"""
+    f = s.split("^")
+    if len(f) < 10 or f[0] != "1":
+        return None
+    items = {}
+    for pair in filter(None, f[4].split(";")):
+        m = re.match(r"^(\d+),(\d+)$", pair)
+        if m:
+            items[m.group(1)] = int(m.group(2))
+    try:
+        return {"id": f[1], "who": f[2], "t": int(f[3] or 0), "items": items, "why": f[5].strip() or None,
+                "status": f[6], "by": f[7].strip() or None, "at": int(f[8] or 0), "upd": int(f[9] or 0)}
+    except ValueError:
+        return None
+
+
 def parse_layout(s):
     """Forme d'un arbre de talents : 1^clé^spé^nœud;nœud… (nœud = id,x,y,max,type,liens/…,sort[p]/…)"""
     f = s.split("^")
@@ -371,6 +508,10 @@ class ChatTail:
                     card = parse_card(full)
                     if card:
                         out.append(("C", card))
+                elif kind == "R":
+                    req = parse_request(full)
+                    if req:
+                        out.append(("R", req))
                 elif kind == "T":
                     lay = parse_layout(full)
                     if lay:
@@ -409,6 +550,9 @@ class Sender:
                             c["name"], c.get("class"), c.get("level"),
                             ", ".join("%s %s%s" % (x["n"], x["lvl"], " (" + x["spe"] + ")" if x.get("spe") else "") for x in c["profs"]),
                             c.get("discord")))
+                elif p["kind"] == "requests":
+                    for r in pl.values():
+                        log("[TEST] demande %s de %s : %s (%s)" % (r["id"], r["who"], r["items"], r["status"]))
                 elif p["kind"] == "layouts":
                     for lay in pl.values():
                         log("[TEST] arbre de talents %s : %d talents" % (lay["key"], len(lay["nodes"])))
@@ -496,10 +640,70 @@ def outbox_events(db):
     return evs
 
 
+# ---------------------------------------------------------------- demandes faites sur Discord -> jeu
+# Le bot ne peut pas parler au jeu. Le client écrit les demandes Discord dans un fichier Lua de l'addon
+# (Inbox.lua), que le jeu lit à la connexion ou au /reload ; l'addon les propose ensuite au joueur concerné.
+def lua_str(v):
+    return '"' + str(v).replace("\\", "\\\\").replace('"', '\\"').replace("\n", " ") + '"'
+
+
+def write_inbox(wow, reqs, state):
+    rows = []
+    for r in reqs:
+        items = ", ".join("[%d] = %d" % (int(k), int(v)) for k, v in (r.get("items") or {}).items() if str(k).isdigit())
+        rows.append("    { id = %s, who = %s, t = %d, upd = %d, why = %s, items = { %s } },"
+                    % (lua_str(r["id"]), lua_str(r.get("who", "")), int(r.get("t") or 0), int(r.get("upd") or 0),
+                       lua_str(r.get("why") or ""), items))
+    text = ("-- Écrit par le client Browz Forever (pont) : demandes faites sur Discord. Ne pas modifier.\n"
+            "BrowzForeverInbox = {\n  t = %d,\n  requests = {\n%s\n  },\n}\n" % (int(time.time()), "\n".join(rows)))
+    body = "\n".join(rows)
+    if state.get("inbox_body") == body:
+        return
+    path = os.path.join(wow, "Interface", "AddOns", "BrowzForever", "Inbox.lua")
+    if not os.path.isdir(os.path.dirname(path)):
+        return
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(tmp, path)
+    state["inbox_body"] = body
+    if rows:
+        log("%d demande(s) Discord prête(s) pour le jeu (lues au prochain /reload)." % len(rows))
+
+
+def fetch_inbox(cfg):
+    url = cfg.get("bot_url")
+    if not url:
+        return None
+    try:
+        q = urllib.parse.urlencode({"cle": cfg.get("cle_guilde", "")})
+        with urllib.request.urlopen(url.rstrip("/") + "/api/inbox?" + q, timeout=15) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        return data.get("requests") if data.get("ok") else None
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+
+
 def main():
     test = "--test" in sys.argv
+    lock = single_instance()
+    if lock is None:
+        time.sleep(5)                 # juste après une mise à jour, l'ancien client finit de s'arrêter
+        lock = single_instance()
+    if lock is None:
+        log("Un client Browz tourne déjà : celui-ci s'arrête.")
+        return
+    if FROZEN:
+        try:
+            if os.path.exists(sys.executable + ".old"):
+                os.remove(sys.executable + ".old")
+        except OSError:
+            pass
+    log("Client Browz Forever v%d." % CLIENT_VERSION)
+    check_update(lock)
     cfg = load_config()
     state = load_json(STATE_PATH, {})
+    state["maj_t"] = time.time()      # la vérification de mise à jour vient d'être faite au démarrage
     state.pop("lire_journal_depuis_debut", None)
     if "--depuis-debut" in sys.argv:
         state.pop("chatlog_offset", None)
@@ -525,6 +729,9 @@ def main():
         cards = {x["name"]: x for k, x in found if k == "C"}
         if cards:
             sender.push("chars", cards)
+        reqs = {x["id"]: x for k, x in found if k == "R"}
+        if reqs:
+            sender.push("requests", reqs)
         lays = {x["key"]: x for k, x in found if k == "T"}
         if lays:
             sender.push("layouts", lays)
@@ -551,6 +758,18 @@ def main():
                         cards[card["name"]] = card
                 if cards:
                     sender.push("chars", cards)
+                reqs = {}
+                for rid, it in (db.get("requests") or {}).items():
+                    if isinstance(it, dict) and it.get("id"):
+                        items = it.get("items") or {}
+                        if isinstance(items, list):
+                            items = {str(i + 1): n for i, n in enumerate(items) if n}
+                        reqs[it["id"]] = {"id": it["id"], "who": it.get("who"), "t": it.get("t") or 0,
+                                          "items": {str(k): v for k, v in items.items()}, "why": it.get("why"),
+                                          "status": it.get("status"), "by": it.get("by"), "at": it.get("at") or 0,
+                                          "upd": it.get("upd") or 0}
+                if reqs:
+                    sender.push("requests", reqs)
                 lays = {}
                 for _, it in (db.get("layouts") or {}).items():
                     lay = parse_layout(it.get("data", "")) if isinstance(it, dict) else None
@@ -571,6 +790,17 @@ def main():
             except (OSError, ValueError) as e:
                 log("Lecture des SavedVariables impossible pour l'instant (%s)." % e)
         sender.flush()
+        if time.time() - state.get("maj_t", 0) > 6 * 3600:   # nouvelle version ? (toutes les 6 h)
+            state["maj_t"] = time.time()
+            check_update(lock)
+        if not test and time.time() - state.get("inbox_t", 0) > 60:
+            state["inbox_t"] = time.time()
+            reqs = fetch_inbox(cfg)
+            if reqs is not None:
+                try:
+                    write_inbox(wow, reqs, state)
+                except OSError as e:
+                    log("Inbox.lua impossible à écrire (%s)." % e)
         state["passages_envoyes"] = list(sent_ids)[-1000:]
         save_json(STATE_PATH, state)
         if once:

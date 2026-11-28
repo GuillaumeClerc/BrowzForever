@@ -16,18 +16,24 @@ Pour le donner à un nouveau membre : onglet **Liaison → Lien de l'addon** (ou
 - **Banque** : vue de la banque de guilde comme dans le jeu (onglets) ou en liste, consultable partout.
 - **Liaison** : tes métiers, tes personnages, ton pseudo Discord (Browzer te demandera de confirmer en message privé).
 - **Talents** et **équipement** : visibles sur le Discord de la guilde (`/browz inspect`).
-- **Demandes** et **Craft** : à venir.
+- **Demandes** : demande des objets de la banque avec une explication ; les officiers acceptent, l'addon retire les objets et prépare le courrier.
+- **Craft** : à venir.
 
 ## Pour les officiers : le pont
 
 Un addon WoW ne peut pas accéder à internet. Un « pont » (PC d'un officier) fait le lien avec Discord.
 Les membres n'en ont pas besoin.
 
-1. Installe Python 3 : https://www.python.org/downloads/ (bouton jaune « Download Python »).
-   Pendant l'installation, **coche « Add python.exe to PATH »** en bas de la première fenêtre.
-2. Copie le dossier `client`, renomme `config.exemple.json` en `config.json` et remplis-le
-   avec l'adresse et la clé que Bellock t'envoie en privé.
-3. En jeu : `/browz pont on`, puis lance `Lancer.bat`.
+1. Télécharge **BrowzClient.exe** et **Installer.bat** (Bellock te les envoie, ou page *Releases* du dépôt).
+2. Mets-les dans le même dossier et lance **Installer.bat** : le client s'installe et se lancera tout seul à chaque
+   démarrage du PC, sans fenêtre.
+3. Au premier lancement, une petite fenêtre demande l'adresse du bot et la clé (Bellock te les envoie en privé).
+4. En jeu : `/browz pont on` (une seule fois).
+
+Le client **se met à jour tout seul** (il vérifie les *Releases* du dépôt au démarrage puis toutes les 6 h).
+`Desinstaller.bat` l'arrête et le retire du démarrage ; `Voir le journal.bat` ouvre son journal.
+Windows peut afficher un avertissement (« Windows a protégé votre ordinateur ») : c'est normal pour un petit
+programme non signé, clique sur *Informations complémentaires → Exécuter quand même*.
 
 > Ne publie jamais ton `config.json` (déjà exclu par `.gitignore`).
 

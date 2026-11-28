@@ -167,6 +167,10 @@ end
 -- 3) Pendant le chargement seulement, on regarde les sacs : un clic droit dans les sacs dépose
 --    directement un objet, et le voile ne peut pas l'empêcher.
 local open, cur, base, openTime, logTimer, quietTimer, maxTimer = false
+local loadedListeners, closedListeners = {}, {}
+function Bank.OnLoaded(fn) loadedListeners[#loadedListeners + 1] = fn end   -- coffre ouvert ET contenu chargé
+function Bank.OnClosed(fn) closedListeners[#closedListeners + 1] = fn end
+function Bank.IsReady() return open and base ~= nil end
 local bagsAtOpen, moneyAtOpen, earlyItems, earlyMoney
 
 local function isGuildBank(t)
@@ -225,6 +229,7 @@ local function markLoaded()
   for id, n in pairs(now) do if not (bagsAtOpen or {})[id] then items[id] = -n end end
   earlyItems, earlyMoney = items, (moneyAtOpen or 0) - GetMoney()
   hideVeil()
+  for _, fn in ipairs(loadedListeners) do pcall(fn) end
 end
 
 local function onOpen()
@@ -275,6 +280,7 @@ local function onClose()
     BF.Send("S", Bank.SerializeSnap(cur))
   end
   bagsAtOpen, moneyAtOpen, earlyItems, earlyMoney, base = nil, nil, nil, 0, nil
+  for _, fn in ipairs(closedListeners) do pcall(fn) end
 end
 
 local f = CreateFrame("Frame")

@@ -2,7 +2,7 @@
 local ADDON, BF = ...
 _G.BrowzForever = BF
 
-BF.VERSION = "0.8.0"
+BF.VERSION = "0.10.0"
 BF.GUILD_NAME = "Browz Forever"   -- l'addon ne fait rien en dehors de cette guilde
 
 local function defaults()
@@ -13,6 +13,7 @@ local function defaults()
     bridge = false,    -- ce PC fait le pont vers Discord
     items = {},        -- catalogue des objets vus : [id] = { n = nom, q = qualité, c = catégorie, i = icône }
     ui = {},
+    requests = {},     -- demandes de retrait de la guilde : [id] = { who, t, items, why, status, by, upd… }
   }
 end
 
