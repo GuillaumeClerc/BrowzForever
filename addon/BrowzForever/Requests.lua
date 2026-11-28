@@ -235,7 +235,7 @@ local function pickStacks(stacks, need)
 end
 
 function Req.Withdraw()
-  if not BF.Bank.IsReady() then return end
+  if not BF.Bank.IsReady() or running then return end
   local needs = {}   -- [id] = quantité à retirer
   local list = Req.List(function(r) return r.status == "acceptee" and r.by == BF.MyName() end)
   if #list == 0 then return end
@@ -243,6 +243,8 @@ function Req.Withdraw()
   local before = {}
   for id, n in pairs(needs) do before[id] = bagCount(id); needs[id] = math.max(0, n - before[id]) end
   local free = freeBagSlots()
+  -- 1er passage : on prépare tout et on vérifie la place dans les sacs et les retraits restants du coffre
+  local plans, slotsNeeded, perTab = {}, 0, {}
   for id, n in pairs(needs) do
     if n > 0 then
       local stacks, total = {}, 0
@@ -255,8 +257,35 @@ function Req.Withdraw()
           end
         end
       end
-      if total < n then BF.Print(("|cffff5555Il manque %d × %s dans la banque.|r"):format(n - total, itemName(id))) end
       local picked, extra = pickStacks(stacks, n)
+      slotsNeeded = slotsNeeded + #picked + (extra > 0 and 1 or 0)
+      for _, i in ipairs(picked) do perTab[stacks[i].tab] = (perTab[stacks[i].tab] or 0) + 1 end
+      plans[id] = { stacks = stacks, total = total, picked = picked, extra = extra }
+    end
+  end
+  local problems = {}
+  if slotsNeeded > #free then
+    problems[#problems + 1] = ("Il faut |cffffffff%d|r case(s) libre(s) dans tes sacs, tu en as |cffffffff%d|r : fais de la place."):format(slotsNeeded, #free)
+  end
+  for tab, k in pairs(perTab) do
+    local name, _, _, _, _, remaining = GetGuildBankTabInfo(tab)
+    if remaining and remaining >= 0 and remaining < k then
+      problems[#problems + 1] = ("Il te reste |cffffffff%d|r retrait(s) aujourd'hui sur l'onglet %s, il en faut |cffffffff%d|r."):format(remaining, name or tab, k)
+    end
+  end
+  if #problems > 0 then
+    Req.withdrawWarning = "|cffff5555Retrait impossible :|r\n" .. table.concat(problems, "\n")
+    BF.Print(Req.withdrawWarning:gsub("\n", " "))
+    changed()
+    return
+  end
+  Req.withdrawWarning = nil
+  for id, n in pairs(needs) do
+    local plan = plans[id]
+    if plan then
+      local stacks, total = plan.stacks, plan.total
+      if total < n then BF.Print(("|cffff5555Il manque %d × %s dans la banque.|r"):format(n - total, itemName(id))) end
+      local picked, extra = plan.picked, plan.extra
       -- le surplus est recoupé dans la plus grosse pile prise
       local cut
       if extra > 0 then
@@ -341,6 +370,13 @@ BF.Bank.OnLoaded(function()
   end
 end)
 BF.Bank.OnClosed(function() if Req.side then Req.side:Hide() end end)
+
+-- Retrait bloqué (sacs pleins) : on réessaie tout seul dès que des cases se libèrent, tant que le coffre est ouvert
+local retry = CreateFrame("Frame")
+retry:RegisterEvent("BAG_UPDATE_DELAYED")
+retry:SetScript("OnEvent", function()
+  if Req.withdrawWarning and BF.IsOfficer() and BF.Bank.IsReady() then Req.Withdraw() end
+end)
 
 -- Mettre des objets précis (quantités exactes) dans des cases d'envoi : courrier ou échange.
 -- 1) les piles trop grosses sont d'abord coupées dans une case vide des sacs ; 2) on pose les piles exactes.
@@ -848,7 +884,7 @@ function Req.ShowSide()
   if #open == 0 then return end
   if not Req.side then
     local s = CreateFrame("Frame", "BrowzForeverRequestsSide", gb, "BasicFrameTemplateWithInset")
-    s:SetSize(330, 400)
+    s:SetSize(330, 430)
     s.title = s:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     s.title:SetPoint("TOP", 0, -5); s.title:SetText("Browz Forever — Demandes")
     for i = 1, 5 do
@@ -868,7 +904,7 @@ function Req.ShowSide()
       sideRows[i] = r
     end
     s.log = label(s, "GameFontHighlightSmall"); s.log:SetPoint("TOPLEFT", 16, -306); s.log:SetPoint("RIGHT", -16, 0)
-    s.log:SetWordWrap(true); s.log:SetJustifyV("TOP"); s.log:SetHeight(60)
+    s.log:SetWordWrap(true); s.log:SetJustifyV("TOP"); s.log:SetHeight(85)
     s.hint = label(s, "GameFontNormalSmall"); s.hint:SetPoint("BOTTOMLEFT", 16, 12); s.hint:SetPoint("RIGHT", -16, 0)
     s.hint:SetWordWrap(true)
     Req.side = s
@@ -897,7 +933,9 @@ function Req.RefreshSide()
       row:Show()
     else row:Hide() end
   end
-  s.log:SetText(#withdrawLog > 0 and table.concat(withdrawLog, "\n") or "")
+  local logText = #withdrawLog > 0 and table.concat(withdrawLog, "\n") or ""
+  if Req.withdrawWarning then logText = Req.withdrawWarning .. (logText ~= "" and ("\n\n" .. logText) or "") end
+  s.log:SetText(logText)
   local ready = #Req.List(function(r) return r.status == "retiree" and r.by == BF.MyName() end) > 0
   s.hint:SetText(ready and "|cff33ff33Va à la boîte aux lettres : tout sera pré-rempli, tu n'auras plus qu'à envoyer !|r"
     or "Accepter retire les objets dans tes sacs.")
