@@ -449,9 +449,9 @@ for i = 1, CART_ROWS do
   local r = CreateFrame("Frame", nil, cw)
   r:SetSize(292, 26); r:SetPoint("TOPLEFT", 14, -52 - (i - 1) * 28)
   r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(22, 22); r.icon:SetPoint("LEFT")
-  r.text = label(r); r.text:SetPoint("LEFT", r.icon, "RIGHT", 6, 0); r.text:SetPoint("RIGHT", -92, 0)
+  r.text = label(r); r.text:SetPoint("LEFT", r.icon, "RIGHT", 6, 0); r.text:SetPoint("RIGHT", -118, 0)
   r.qty = CreateFrame("EditBox", nil, r, "InputBoxTemplate")
-  r.qty:SetSize(40, 20); r.qty:SetPoint("RIGHT", -38, 0); r.qty:SetAutoFocus(false); r.qty:SetNumeric(true)
+  r.qty:SetSize(40, 20); r.qty:SetPoint("RIGHT", -72, 0); r.qty:SetAutoFocus(false); r.qty:SetNumeric(true)
   r.qty:SetMaxLetters(4); r.qty:SetJustifyH("CENTER")
   r.qty:SetScript("OnEnterPressed", r.qty.ClearFocus)
   r.qty:SetScript("OnEscapePressed", r.qty.ClearFocus)
@@ -462,7 +462,7 @@ for i = 1, CART_ROWS do
     cart[r.id] = n
     cartChanged()
   end)
-  r.max = label(r, "GameFontDisableSmall"); r.max:SetPoint("LEFT", r.qty, "RIGHT", 4, 0)
+  r.max = label(r, "GameFontDisableSmall"); r.max:SetPoint("LEFT", r.qty, "RIGHT", 4, 0); r.max:SetWidth(42)
   r.one = label(r, "GameFontHighlight"); r.one:SetPoint("CENTER", r.qty, "CENTER")
   r.del = button(r, "x", 22, function()
     if not r.id then return end
@@ -473,7 +473,12 @@ for i = 1, CART_ROWS do
   r.del:SetPoint("RIGHT", 0, 0)
   r:EnableMouse(true)
   r:SetScript("OnEnter", function(self)
-    if self.id then GameTooltip:SetOwner(self, "ANCHOR_LEFT"); GameTooltip:SetItemByID(self.id); GameTooltip:Show() end
+    if self.id then
+      GameTooltip:SetOwner(self, "ANCHOR_LEFT"); GameTooltip:SetItemByID(self.id)
+      GameTooltip:AddLine(" ")
+      GameTooltip:AddLine(("En banque : %d (toutes piles confondues)"):format(bankTotals()[self.id] or 0), 1, 0.82, 0)
+      GameTooltip:Show()
+    end
   end)
   r:SetScript("OnLeave", GameTooltip_Hide)
   cartRows[i] = r
