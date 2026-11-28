@@ -87,6 +87,15 @@ local function showItemTooltip(owner, id, extra)
   end
   GameTooltip:Show()
 end
+-- Clic sur un objet : l'onglet Demandes (Requests.lua) peut le prendre (clic droit = menu, clic gauche = +1
+-- dans une demande ouverte) ; sinon Maj+clic = lien dans le chat
+local function itemClick(owner, mouse, id)
+  if BF.OnBankItemClick and BF.OnBankItemClick(owner, mouse, id) then return end
+  if IsModifiedClick("CHATLINK") then
+    local _, link = C_Item.GetItemInfo(id)
+    if link then ChatEdit_InsertLink(link) end
+  end
+end
 local function chatLink(id)
   if IsModifiedClick("CHATLINK") then
     local _, link = C_Item.GetItemInfo(id)
@@ -129,10 +138,11 @@ for s = 1, 98 do
   b.count:SetPoint("BOTTOMRIGHT", -3, 3)
   b:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
   b:SetScript("OnEnter", function(self)
-    if self.item then showItemTooltip(self, self.item.id) end
+    if self.item then showItemTooltip(self, self.item.id, { { "Clic droit : faire une demande", 0.6, 0.8, 1 } }) end
   end)
   b:SetScript("OnLeave", GameTooltip_Hide)
-  b:SetScript("OnClick", function(self) if self.item then chatLink(self.item.id) end end)
+  b:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  b:SetScript("OnClick", function(self, mouse) if self.item then itemClick(self, mouse, self.item.id) end end)
   slots[s] = b
 end
 
@@ -231,10 +241,12 @@ for i = 1, ROWS do
     if not e or e.header then return end
     local extra = { { "En banque : " .. e.n, 1, 0.82, 0 } }
     for _, w in ipairs(e.where or {}) do extra[#extra + 1] = { "  " .. w, 0.8, 0.8, 0.8 } end
+    extra[#extra + 1] = { "Clic droit : faire une demande", 0.6, 0.8, 1 }
     showItemTooltip(self, e.id, extra)
   end)
   r:SetScript("OnLeave", GameTooltip_Hide)
-  r:SetScript("OnClick", function(self) local e = self.entry; if e and not e.header then chatLink(e.id) end end)
+  r:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+  r:SetScript("OnClick", function(self, mouse) local e = self.entry; if e and not e.header then itemClick(self, mouse, e.id) end end)
   rows[i] = r
 end
 scroll:SetScript("OnVerticalScroll", function(self, offset)

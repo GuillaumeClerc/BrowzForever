@@ -377,35 +377,27 @@ local function label(parent, template)
   return fs
 end
 
--- sous-onglets
-local view = "new"
+-- sous-onglets : mes demandes / demandes de la guilde (les demandes se font depuis l'onglet Banque)
+local view = "mine"
 local views = {}
 local switch = {}
 local function setView(v) view = v; for k, fr in pairs(views) do fr:SetShown(k == v) end
   for k, b in pairs(switch) do if k == v then b:LockHighlight() else b:UnlockHighlight() end end
   Req.Refresh()
 end
-local defs = { { "new", "Nouvelle demande" }, { "mine", "Mes demandes" }, { "guild", "Demandes de la guilde" } }
+local defs = { { "mine", "Mes demandes" }, { "guild", "Demandes de la guilde" } }
 for i, d in ipairs(defs) do
-  local b = button(panel, d[2], 170, function() setView(d[1]) end)
-  b:SetPoint("TOPLEFT", 16 + (i - 1) * 178, -32)
+  local b = button(panel, d[2], 200, function() setView(d[1]) end)
+  b:SetPoint("TOPLEFT", 16 + (i - 1) * 208, -32)
   switch[d[1]] = b
   local fr = CreateFrame("Frame", nil, panel)
   fr:SetPoint("TOPLEFT", 0, -60); fr:SetPoint("BOTTOMRIGHT")
   views[d[1]] = fr
 end
+local howTo = label(panel, "GameFontDisableSmall")
+howTo:SetPoint("BOTTOMLEFT", 22, 14)
+howTo:SetText("Pour demander un objet : onglet |cffffd100Banque|r, clic droit sur l'objet → « Faire une demande ».")
 
--- Nouvelle demande : à gauche les objets de la banque, à droite le panier ----------------------------
-local nv = views.new
-local cart, whyText = {}, ""
-local search = CreateFrame("EditBox", nil, nv, "InputBoxTemplate")
-search:SetSize(240, 20); search:SetPoint("TOPLEFT", 24, -6); search:SetAutoFocus(false)
-search.hint = label(search, "GameFontDisable"); search.hint:SetPoint("LEFT", 4, 0); search.hint:SetText("Rechercher dans la banque…")
-search:SetScript("OnTextChanged", function(self) self.hint:SetShown(self:GetText() == ""); Req.Refresh() end)
-search:SetScript("OnEscapePressed", search.ClearFocus)
-
-local stockRows, stockList, stockOffset = {}, {}, 0
-local STOCK_ROWS = 10
 local function bankTotals()
   local tot, bank = {}, BF.Bank.Get()
   for _, tab in pairs((bank and bank.tabs) or {}) do
@@ -413,69 +405,132 @@ local function bankTotals()
   end
   return tot
 end
-for i = 1, STOCK_ROWS do
-  local r = CreateFrame("Button", nil, nv)
-  r:SetSize(256, ROW); r:SetPoint("TOPLEFT", 18, -30 - (i - 1) * ROW)
-  r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
-  r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(18, 18); r.icon:SetPoint("LEFT", 4, 0)
-  r.text = label(r); r.text:SetPoint("LEFT", r.icon, "RIGHT", 6, 0); r.text:SetPoint("RIGHT", -40, 0)
-  r.count = label(r, "GameFontNormal"); r.count:SetPoint("RIGHT", -4, 0)
-  r:SetScript("OnClick", function(self)
-    local id, stock = self.id, self.stock
-    if not id then return end
-    local n = IsShiftKeyDown() and stock or 1
-    cart[id] = math.min(stock, (cart[id] or 0) + n)
-    Req.Refresh()
+
+-- Fenêtre « Nouvelle demande », à droite de la fenêtre principale ------------------------------------
+local cart, cartOrder = {}, {}
+local CART_ROWS = 8
+local cw = CreateFrame("Frame", "BrowzForeverRequestCart", BF.MainFrame, "BasicFrameTemplateWithInset")
+cw:SetSize(320, 400)
+cw:SetPoint("TOPLEFT", BF.MainFrame, "TOPRIGHT", 4, 0)
+cw:Hide()
+cw.title = cw:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+cw.title:SetPoint("TOP", 0, -5); cw.title:SetText("Nouvelle demande")
+local cwHint = label(cw, "GameFontDisableSmall")
+cwHint:SetPoint("TOPLEFT", 14, -30); cwHint:SetPoint("RIGHT", -14, 0); cwHint:SetWordWrap(true)
+cwHint:SetText("Clic gauche sur un objet de la banque : +1. Change la quantité ici.")
+local cartRows = {}
+local function cartChanged() Req.RefreshCart() end
+for i = 1, CART_ROWS do
+  local r = CreateFrame("Frame", nil, cw)
+  r:SetSize(292, 26); r:SetPoint("TOPLEFT", 14, -52 - (i - 1) * 28)
+  r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(22, 22); r.icon:SetPoint("LEFT")
+  r.text = label(r); r.text:SetPoint("LEFT", r.icon, "RIGHT", 6, 0); r.text:SetPoint("RIGHT", -92, 0)
+  r.qty = CreateFrame("EditBox", nil, r, "InputBoxTemplate")
+  r.qty:SetSize(40, 20); r.qty:SetPoint("RIGHT", -38, 0); r.qty:SetAutoFocus(false); r.qty:SetNumeric(true)
+  r.qty:SetMaxLetters(4); r.qty:SetJustifyH("CENTER")
+  r.qty:SetScript("OnEnterPressed", r.qty.ClearFocus)
+  r.qty:SetScript("OnEscapePressed", r.qty.ClearFocus)
+  r.qty:SetScript("OnEditFocusLost", function(self)
+    if not r.id then return end
+    local stock = bankTotals()[r.id] or 0
+    local n = math.max(1, math.min(stock, tonumber(self:GetText()) or 1))
+    cart[r.id] = n
+    cartChanged()
   end)
+  r.max = label(r, "GameFontDisableSmall"); r.max:SetPoint("LEFT", r.qty, "RIGHT", 4, 0)
+  r.one = label(r, "GameFontHighlight"); r.one:SetPoint("CENTER", r.qty, "CENTER")
+  r.del = button(r, "x", 22, function()
+    if not r.id then return end
+    cart[r.id] = nil
+    for k, id in ipairs(cartOrder) do if id == r.id then table.remove(cartOrder, k) break end end
+    cartChanged()
+  end)
+  r.del:SetPoint("RIGHT", 0, 0)
+  r:EnableMouse(true)
   r:SetScript("OnEnter", function(self)
-    if not self.id then return end
-    GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetItemByID(self.id)
-    GameTooltip:AddLine(" "); GameTooltip:AddLine("Clic : +1 dans la demande · Maj+clic : tout", 0.6, 0.8, 1)
-    GameTooltip:Show()
+    if self.id then GameTooltip:SetOwner(self, "ANCHOR_LEFT"); GameTooltip:SetItemByID(self.id); GameTooltip:Show() end
   end)
   r:SetScript("OnLeave", GameTooltip_Hide)
-  stockRows[i] = r
-end
-nv:EnableMouseWheel(true)
-nv:SetScript("OnMouseWheel", function(_, delta)
-  stockOffset = math.max(0, math.min(math.max(0, #stockList - STOCK_ROWS), stockOffset - delta * 3))
-  Req.Refresh()
-end)
-local stockInfo = label(nv, "GameFontDisableSmall"); stockInfo:SetPoint("TOPLEFT", 24, -30 - STOCK_ROWS * ROW - 4)
-
-local cartTitle = label(nv, "GameFontNormal"); cartTitle:SetPoint("TOPLEFT", 300, -8); cartTitle:SetText("Ta demande")
-local cartRows = {}
-for i = 1, 6 do
-  local r = CreateFrame("Frame", nil, nv)
-  r:SetSize(W - 320, ROW); r:SetPoint("TOPLEFT", 296, -28 - (i - 1) * ROW)
-  r.text = label(r); r.text:SetPoint("LEFT", 4, 0); r.text:SetPoint("RIGHT", -70, 0)
-  r.minus = button(r, "-", 22, function() local id = r.id; if id then cart[id] = (cart[id] or 0) - 1
-    if cart[id] <= 0 then cart[id] = nil end; Req.Refresh() end end)
-  r.minus:SetPoint("RIGHT", -46, 0)
-  r.plus = button(r, "+", 22, function() local id = r.id; if id then
-    cart[id] = math.min(bankTotals()[id] or 0, (cart[id] or 0) + 1); Req.Refresh() end end)
-  r.plus:SetPoint("RIGHT", -24, 0)
-  r.del = button(r, "x", 22, function() if r.id then cart[r.id] = nil; Req.Refresh() end end)
-  r.del:SetPoint("RIGHT", 0, 0)
   cartRows[i] = r
 end
-local whyLabel = label(nv, "GameFontNormal"); whyLabel:SetPoint("TOPLEFT", 300, -28 - 6 * ROW - 6)
+local more = label(cw, "GameFontDisableSmall"); more:SetPoint("TOPLEFT", 16, -52 - CART_ROWS * 28)
+local whyLabel = label(cw, "GameFontNormal"); whyLabel:SetPoint("TOPLEFT", 16, -52 - CART_ROWS * 28 - 16)
 whyLabel:SetText("Explication (ex. « pour monter mon métier »)")
-local why = CreateFrame("EditBox", nil, nv, "InputBoxTemplate")
-why:SetSize(W - 330, 20); why:SetPoint("TOPLEFT", whyLabel, "BOTTOMLEFT", 6, -4); why:SetAutoFocus(false)
+local why = CreateFrame("EditBox", nil, cw, "InputBoxTemplate")
+why:SetSize(282, 20); why:SetPoint("TOPLEFT", whyLabel, "BOTTOMLEFT", 6, -4); why:SetAutoFocus(false)
 why:SetMaxLetters(150)
-why:SetScript("OnTextChanged", function(self) whyText = self:GetText() or "" end)
 why:SetScript("OnEscapePressed", why.ClearFocus)
-local send = button(nv, "Envoyer la demande", 170, function()
+why:SetScript("OnEnterPressed", why.ClearFocus)
+local send = button(cw, "Envoyer la demande", 150, function()
   local items, any = {}, false
   for id, n in pairs(cart) do if n > 0 then items[id] = n; any = true end end
-  if not any then BF.Print("Ajoute d'abord des objets (clic sur un objet de la banque)."); return end
-  if strtrim(whyText) == "" then BF.Print("Écris une petite explication pour les officiers."); return end
-  Req.Create(items, strtrim(whyText))
-  wipe(cart); why:SetText(""); why:ClearFocus()
-  setView("mine")
+  if not any then BF.Print("Ajoute d'abord des objets (clic gauche sur un objet de la banque)."); return end
+  local text = strtrim(why:GetText() or "")
+  if text == "" then BF.Print("Écris une petite explication pour les officiers."); return end
+  Req.Create(items, text)
+  wipe(cart); wipe(cartOrder); why:SetText(""); why:ClearFocus()
+  cw:Hide()
 end)
-send:SetPoint("TOPLEFT", why, "BOTTOMLEFT", -6, -10)
+send:SetPoint("BOTTOMRIGHT", -12, 12)
+local cancel = button(cw, "Annuler", 90, function() wipe(cart); wipe(cartOrder); why:SetText(""); cw:Hide() end)
+cancel:SetPoint("RIGHT", send, "LEFT", -6, 0)
+
+function Req.CartAdd(id, n)
+  local stock = bankTotals()[id] or 0
+  if stock <= 0 then BF.Print(itemName(id) .. " n'est plus dans la banque (d'après le dernier scan)."); return end
+  if not cart[id] then cartOrder[#cartOrder + 1] = id end
+  local before = cart[id] or 0
+  cart[id] = math.min(stock, before + (n or 1))
+  if cart[id] == before then BF.Print(("Il n'y a que %d × %s dans la banque."):format(stock, itemName(id))) end
+  cw:Show()
+  cartChanged()
+end
+
+function Req.RefreshCart()
+  if not cw:IsShown() then return end
+  local tot = bankTotals()
+  for i, row in ipairs(cartRows) do
+    local id = cartOrder[i]
+    row.id = id
+    if id then
+      local stock = tot[id] or 0
+      row.icon:SetTexture(C_Item.GetItemIconByID(id)); row.text:SetText(itemLabel(id))
+      local stackable = stock > 1
+      row.qty:SetShown(stackable); row.max:SetShown(stackable); row.one:SetShown(not stackable)
+      if not row.qty:HasFocus() then row.qty:SetText(tostring(cart[id] or 1)) end
+      row.max:SetText("/ " .. stock); row.one:SetText("1")
+      row:Show()
+    else row:Hide() end
+  end
+  more:SetText(#cartOrder > CART_ROWS and ("+ %d autre(s) objet(s)"):format(#cartOrder - CART_ROWS) or "")
+end
+cw:SetScript("OnShow", Req.RefreshCart)
+
+-- Clics sur les objets de l'onglet Banque (UI.lua) : clic droit = menu, clic gauche = +1 si une demande est ouverte
+function BF.OnBankItemClick(owner, mouse, id)
+  if not id then return false end
+  if mouse == "RightButton" then
+    if MenuUtil and MenuUtil.CreateContextMenu then
+      MenuUtil.CreateContextMenu(owner, function(_, root)
+        root:CreateTitle(itemName(id))
+        root:CreateButton("Faire une demande", function() Req.CartAdd(id, 1) end)
+        root:CreateButton("Lien dans le chat", function()
+          local _, link = C_Item.GetItemInfo(id)
+          if link then ChatEdit_InsertLink(link) end
+        end)
+      end)
+    else
+      Req.CartAdd(id, 1)
+    end
+    return true
+  end
+  if mouse == "LeftButton" and cw:IsShown() and not IsModifiedClick() then
+    Req.CartAdd(id, 1)
+    return true
+  end
+  return false
+end
+
 
 -- Listes « Mes demandes » et « Demandes de la guilde » ------------------------------------------------
 local function makeList(parent, n, withButtons)
@@ -494,7 +549,7 @@ local function makeList(parent, n, withButtons)
 end
 local mineRows = makeList(views.mine, 6)
 local guildRows = makeList(views.guild, 6)
-local guildNote = label(views.guild, "GameFontDisable"); guildNote:SetPoint("BOTTOMLEFT", 22, 16)
+local guildNote = label(views.guild, "GameFontDisable"); guildNote:SetPoint("TOPLEFT", 24, -10)
 
 local function statusText(r)
   local st = STATUS[r.status]
@@ -526,36 +581,10 @@ local function fillRow(row, r, mode)
 end
 
 function Req.Refresh()
-  if not panel:IsShown() and not (Req.side and Req.side:IsShown()) then return end
-  -- banque
-  local tot = bankTotals()
-  local filter = strlower(search:GetText() or "")
-  wipe(stockList)
-  for id, n in pairs(tot) do
-    local name = itemName(id)
-    if filter == "" or strlower(name):find(filter, 1, true) then stockList[#stockList + 1] = { id = id, n = n, name = name } end
-  end
-  table.sort(stockList, function(a, b) return a.name < b.name end)
-  stockOffset = math.min(stockOffset, math.max(0, #stockList - STOCK_ROWS))
-  for i, row in ipairs(stockRows) do
-    local e = stockList[i + stockOffset]
-    row.id, row.stock = e and e.id, e and e.n
-    if e then
-      local left = e.n - (cart[e.id] or 0)
-      row.icon:SetTexture(C_Item.GetItemIconByID(e.id)); row.text:SetText(itemLabel(e.id)); row.count:SetText(left)
-      row:Show()
-    else row:Hide() end
-  end
-  stockInfo:SetText(#stockList > STOCK_ROWS and ("Molette : %d-%d sur %d"):format(stockOffset + 1,
-    math.min(#stockList, stockOffset + STOCK_ROWS), #stockList) or (#stockList == 0 and "Banque inconnue : ouvre le coffre une fois." or ""))
-  -- panier
-  local ids = {}
-  for id in pairs(cart) do ids[#ids + 1] = id end
-  table.sort(ids)
-  for i, row in ipairs(cartRows) do
-    local id = ids[i]
-    row.id = id
-    if id then row.text:SetText(itemLabel(id, cart[id])); row:Show() else row:Hide() end
+  if not panel:IsShown() then
+    if Req.side and Req.side:IsShown() then Req.RefreshSide() end
+    Req.RefreshCart()
+    return
   end
   -- listes
   local mine = Req.List(function(r) return r.who == BF.MyName() end)
@@ -565,6 +594,7 @@ function Req.Refresh()
   guildNote:SetText(#open == 0 and "Aucune demande en cours." or (BF.IsOfficer() and "" or "Seuls les officiers peuvent accepter ou refuser."))
   switch.guild:SetText(("Demandes de la guilde (%d)"):format(#open))
   if Req.side and Req.side:IsShown() then Req.RefreshSide() end
+  Req.RefreshCart()
 end
 panel:SetScript("OnShow", function() setView(view) end)
 Req.OnChange(Req.Refresh)
