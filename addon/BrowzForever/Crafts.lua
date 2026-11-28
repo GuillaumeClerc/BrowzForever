@@ -212,8 +212,25 @@ function Craft.CraftersFor(prof, id)
       out[#out + 1] = { name = name, s = p.s, kind = "addon" }; seen[name] = true
     end
   end
-  if L and isBasic(L, id) then
-    local need = L:GetRequiredSkill(prof, id) or 0
+  local need = L and L:GetRequiredSkill(prof, id) or 0
+  local basic = L and isBasic(L, id)
+  -- ceux qui ont le niveau mais pas (encore) la recette : la commande reste possible, le patron est à obtenir
+  -- (le demandeur le farm ou l'achète à l'HV, l'artisan le farme avec lui, ou une commission paie le patron)
+  for name, c in pairs(crafters()) do
+    local p = c.profs and c.profs[prof]
+    if p and not seen[name] and (p.s or 0) >= need then
+      out[#out + 1] = { name = name, s = p.s, kind = basic and "apprendre" or "patron" }; seen[name] = true
+    end
+  end
+  if L and not basic then
+    for name, levels in pairs(cardLevels()) do
+      local lvl = levels[prof]
+      if lvl and not seen[name] and not (crafters()[name] and crafters()[name].profs[prof]) and lvl >= need then
+        out[#out + 1] = { name = name, s = lvl, kind = "patron" }; seen[name] = true
+      end
+    end
+  end
+  if L and basic then
     for name, levels in pairs(cardLevels()) do
       local lvl = levels[prof]
       if lvl and not seen[name] and not (crafters()[name] and crafters()[name].profs[prof]) and lvl >= need then
@@ -227,7 +244,7 @@ function Craft.CraftersFor(prof, id)
       end
     end
   end
-  local rank = { addon = 1, suppose = 2, metier = 3 }
+  local rank = { addon = 1, suppose = 2, apprendre = 3, patron = 4, metier = 5 }
   table.sort(out, function(a, b)
     if rank[a.kind] ~= rank[b.kind] then return rank[a.kind] < rank[b.kind] end
     if (a.s or 0) ~= (b.s or 0) then return (a.s or 0) > (b.s or 0) end
@@ -296,11 +313,11 @@ function Craft.Search(text, limit)
     return a.name < b.name
   end)
   if q == "" then
-    -- sans recherche : seulement les artisans dont on connaît le niveau (un membre « niveau inconnu » ferait
-    -- remonter toutes les recettes de maître de son métier)
+    -- sans recherche : seulement les recettes que quelqu'un a (ou a sûrement) ; sinon les « niveau inconnu » et
+    -- « patron à obtenir » feraient remonter toutes les recettes de leur métier
     local known = {}
     for _, r in ipairs(out) do
-      for _, w in ipairs(r.who) do if w.kind ~= "metier" then known[#known + 1] = r; break end end
+      for _, w in ipairs(r.who) do if w.kind == "addon" or w.kind == "suppose" then known[#known + 1] = r; break end end
     end
     out = known
     -- haut du panier : pour chaque métier, les recettes à 25 points ou moins du plus haut niveau atteint
@@ -418,7 +435,8 @@ local function showDetail()
   local lines = { ("%s · niveau %d"):format(PROF_NAMES[r.prof] or r.prof, r.need), "", "|cffffd100Artisans|r" }
   for i, w in ipairs(r.who) do
     if i > 8 then lines[#lines + 1] = ("… et %d autre(s)"):format(#r.who - 8); break end
-    local tag = w.kind == "addon" and "" or (w.kind == "suppose" and " |cff999999(supposé)|r" or " |cff999999(niveau inconnu)|r")
+    local tag = ({ addon = "", suppose = " |cff999999(supposé)|r", apprendre = " |cffff9933(à apprendre chez un maître)|r",
+                   patron = " |cffff9933(patron à obtenir)|r", metier = " |cff999999(niveau inconnu)|r" })[w.kind] or ""
     lines[#lines + 1] = ("%s%s%s"):format(short(w.name), w.s and (" · " .. w.s) or "", tag)
   end
   lines[#lines + 1] = ""

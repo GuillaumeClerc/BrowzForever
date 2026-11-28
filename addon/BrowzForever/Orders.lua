@@ -173,12 +173,15 @@ end
 
 function Ord.Take(o, fee)
   fee = math.max(0, math.floor(fee or 0))
-  if fee > 0 then update(o, "proposee", { crafter = me(), fee = fee })
-  else update(o, "prise", { crafter = me(), fee = 0 }) end
+  local _, kind = Craft.CanCraft(me(), o.prof, o.recipe)
+  local note = (kind == "patron" and "L'artisan doit d'abord obtenir le patron (à farmer ensemble, à acheter à l'HV, ou payé par la commission)")
+    or (kind == "apprendre" and "L'artisan doit d'abord apprendre la recette chez un maître") or false
+  if fee > 0 then update(o, "proposee", { crafter = me(), fee = fee, note = note })
+  else update(o, "prise", { crafter = me(), fee = 0, note = note }) end
 end
 function Ord.AcceptFee(o) update(o, "prise") end
-function Ord.RefuseFee(o) update(o, "ouverte", { crafter = false, fee = 0 }) end
-function Ord.GiveUp(o) update(o, "ouverte", { crafter = false, fee = 0 }) end
+function Ord.RefuseFee(o) update(o, "ouverte", { crafter = false, fee = 0, note = false }) end
+function Ord.GiveUp(o) update(o, "ouverte", { crafter = false, fee = 0, note = false }) end
 function Ord.Crafted(o)
   update(o, (o.fee or 0) > 0 and "fabriquee" or "payee")   -- sans commission : directement à livrer
 end
@@ -386,6 +389,7 @@ local function showDetail()
   if o.crafter then lines[#lines + 1] = "Artisan : " .. short(o.crafter) end
   if (o.fee or 0) > 0 then lines[#lines + 1] = "Commission : " .. money(o.fee) end
   if o.why then lines[#lines + 1] = "|cffffd100Explication :|r " .. o.why end
+  if o.note then lines[#lines + 1] = "|cffff9933" .. o.note .. "|r" end
   lines[#lines + 1] = ""
   lines[#lines + 1] = "|cffffd100Composants|r (il en faut · en BDG)"
   local comps, all = Ord.Components(o)
