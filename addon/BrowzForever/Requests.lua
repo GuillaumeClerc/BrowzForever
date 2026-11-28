@@ -419,6 +419,35 @@ for i, d in ipairs(defs) do
   fr:SetPoint("TOPLEFT", 0, -60); fr:SetPoint("BOTTOMRIGHT")
   views[d[1]] = fr
 end
+-- Discord → jeu : le jeu ne lit les décisions Discord qu'au chargement de l'interface. Bouton pour recharger,
+-- avec l'heure de la dernière lecture.
+local loadedAt = GetServerTime and GetServerTime() or 0
+function BF.DiscordSyncText()
+  return "Nouveautés Discord lues " .. BF.Ago(loadedAt)
+end
+function BF.MakeReloadButton(parent)
+  local b = button(parent, "Récupérer Discord", 130, function() ReloadUI() end)
+  b:SetScript("OnEnter", function(self)
+    GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+    GameTooltip:SetText("Récupérer les nouveautés Discord")
+    GameTooltip:AddLine("Les demandes et les décisions faites sur Discord n'arrivent dans le jeu qu'au chargement de "
+      .. "l'interface. Ce bouton recharge l'interface (comme /reload) pour les récupérer.", 1, 1, 1, true)
+    GameTooltip:AddLine(BF.DiscordSyncText() .. ".", 0.6, 0.8, 1, true)
+    GameTooltip:Show()
+  end)
+  b:SetScript("OnLeave", GameTooltip_Hide)
+  return b
+end
+local syncBtn = BF.MakeReloadButton(panel)
+syncBtn:SetPoint("TOPRIGHT", -14, -32)
+-- le même bouton dans l'onglet Banque, à gauche de « Vue liste »
+if BF.BankPanel and BF.MainFrame.modeBtn then
+  local b = BF.MakeReloadButton(BF.BankPanel)
+  b:SetPoint("RIGHT", BF.MainFrame.modeBtn, "LEFT", -6, 0)
+end
+local syncInfo = label(panel, "GameFontDisableSmall")
+syncInfo:SetPoint("TOPRIGHT", syncBtn, "BOTTOMRIGHT", 0, -2)
+
 local howTo = label(panel, "GameFontDisableSmall")
 howTo:SetPoint("BOTTOMLEFT", 22, 14)
 howTo:SetText("Pour demander un objet : onglet |cffffd100Banque|r, clic droit sur l'objet, puis « Faire une demande ».")
@@ -715,7 +744,7 @@ function Req.Refresh()
   if Req.side and Req.side:IsShown() then Req.RefreshSide() end
   Req.RefreshCart()
 end
-panel:SetScript("OnShow", function() setView(view) end)
+panel:SetScript("OnShow", function() syncInfo:SetText(BF.DiscordSyncText()); setView(view) end)
 Req.OnChange(Req.Refresh)
 BF.Bank.OnChange(Req.Refresh)
 

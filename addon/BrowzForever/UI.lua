@@ -45,7 +45,7 @@ bdg:SetAllPoints(f)
 BF.MainFrame, BF.BankPanel = f, bdg
 
 f.info = bdg:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-f.info:SetPoint("TOPLEFT", 14, -32); f.info:SetPoint("TOPRIGHT", -110, -32)
+f.info:SetPoint("TOPLEFT", 14, -32); f.info:SetPoint("TOPRIGHT", -246, -32)
 f.info:SetJustifyH("LEFT")
 
 f.modeBtn = CreateFrame("Button", nil, bdg, "UIPanelButtonTemplate")
