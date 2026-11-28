@@ -1,6 +1,6 @@
 -- Browz Forever : artisans et recettes de la guilde (onglet Craft)
--- Données des recettes (noms, niveau requis, composants, objet créé, maître ou non) : bibliothèque LibProfessionDB
--- (addon « ProfessionDB », licence MIT, Pimptasty) — rien à scanner. L'addon ne lit que les recettes APPRISES
+-- Données des recettes (noms, niveau requis, composants, objet créé, maître ou non) : RecipeData.lua, tiré de
+-- LibProfessionDB (Pimptasty, licence MIT) et intégré à l'addon — rien à scanner, rien à installer en plus. L'addon ne lit que les recettes APPRISES
 -- du personnage quand il ouvre un métier, et les partage à la guilde (message W).
 -- Artisans connus :
 --   « addon »   : recettes réellement apprises (lues dans la fenêtre de métier) ;
@@ -18,9 +18,36 @@ local PROF_NAMES = {
 }
 Craft.PROF_NAMES = PROF_NAMES
 
+-- Base des recettes intégrée (RecipeData.lua, tirée de LibProfessionDB, MIT) : pas d'addon à installer en plus.
+-- Petit objet qui répond comme LibProfessionDB, pour ne rien changer au reste.
+local DB = {}
+local byId = {}
+for prof, recs in pairs(BF.RecipeData or {}) do
+  for id, r in pairs(recs) do byId[id] = r end
+end
+function DB:IsReady() return BF.RecipeData ~= nil end
+function DB:HasProfession(prof) return BF.RecipeData[prof] ~= nil end
+function DB:GetRecipes(prof) return BF.RecipeData[prof] end
+function DB:GetName(prof, id) local r = BF.RecipeData[prof] and BF.RecipeData[prof][id]; return r and r[1] end
+function DB:GetRequiredSkill(prof, id) local r = BF.RecipeData[prof] and BF.RecipeData[prof][id]; return r and r[2] end
+function DB:GetCraftedItemID(prof, id)
+  local r = BF.RecipeData[prof] and BF.RecipeData[prof][id]
+  return r and r[3] ~= 0 and r[3] or nil
+end
+function DB:IsAutoTaughtRecipe(id) local r = byId[id]; return r ~= nil and r[4] == true end   -- maître ou d'office
+local reagentCache = {}
+function DB:GetReagents(prof, id)
+  local key = prof .. ":" .. id
+  if reagentCache[key] then return reagentCache[key] end
+  local r = BF.RecipeData[prof] and BF.RecipeData[prof][id]
+  local out = {}
+  for item, n in ((r and r[5]) or ""):gmatch("(%d+):(%d+)") do out[tonumber(item)] = tonumber(n) end
+  reagentCache[key] = out
+  return out
+end
+
 function Craft.Lib()
-  local L = LibStub and LibStub("LibProfessionDB-1.0", true)
-  if L and L.IsGameVersion and L:IsGameVersion("Forever") and L:IsReady() then return L end
+  if BF.RecipeData then return DB end
 end
 
 local function crafters()
@@ -488,7 +515,7 @@ function Craft.Refresh()
   if not view:IsVisible() then return end
   if not Craft.Lib() then
     results = {}
-    info:SetText("|cffff5555L'addon « ProfessionDB » (LibProfessionDB) n'est pas installé ou pas activé.|r")
+    info:SetText("|cffff5555Base des recettes introuvable (RecipeData.lua) : réinstalle l'addon.|r")
     refreshRows(); showDetail(); return
   end
   results = Craft.Search(search:GetText())

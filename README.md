@@ -6,9 +6,7 @@ Addon de la guilde **Browz Forever** (WoW Forever, Horde).
 
 1. Télécharge le dépôt : bouton vert **Code → Download ZIP**.
 2. Copie le dossier `addon/BrowzForever` dans `World of Warcraft\_forever_\Interface\AddOns\`.
-3. Installe aussi **LibProfessionDB** (CurseForge, addon « ProfessionDB » de Pimptasty) : c'est la base de recettes
-   de l'onglet Craft. Sans elle, tout le reste marche, seul l'onglet Craft reste vide.
-4. Relance le jeu, puis tape `/browz` (ou clique sur la pièce d'or près de la minimap, ou sur la macro « Browz BDG »).
+3. Relance le jeu, puis tape `/browz` (ou clique sur la pièce d'or près de la minimap, ou sur la macro « Browz BDG »).
 
 L'addon ne fait rien en dehors de la guilde Browz Forever.
 Pour le donner à un nouveau membre : onglet **Liaison → Lien de l'addon** (ou `/browz lien`), puis Ctrl+C.
@@ -49,3 +47,5 @@ programme non signé, clique sur *Informations complémentaires → Exécuter qu
 ## Licence
 
 © 2026 Guillaume Clerc (Bellock). Tous droits réservés : usage personnel autorisé, redistribution et réutilisation du code interdites sans accord. Détails dans [LICENSE](LICENSE).
+
+La base des recettes de l'onglet Craft vient de [LibProfessionDB](https://www.curseforge.com/wow/addons/libprofessiondb) (Pimptasty, licence MIT, voir `addon/BrowzForever/LICENCE_ProfessionDB.txt`) : elle est intégrée, rien à installer en plus.

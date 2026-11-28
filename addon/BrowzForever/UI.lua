@@ -296,10 +296,12 @@ function f.Refresh()
   local today = w and date("%Y%m%d", w.t) == date("%Y%m%d", GetServerTime())
   if gridMode and w and w.tabs and w.tabs[state.tab] ~= nil then
     local n = w.tabs[state.tab]
-    f.wd:SetText(("Tes retraits ici : %s%s"):format(n < 0 and "illimités" or (n .. " pile" .. (n > 1 and "s" or "")),
-      today and ("  |cffaaaaaa(au coffre à %s)|r"):format(date("%H:%M", w.t)) or "  |cffaaaaaa(à vérifier : relevé un autre jour)|r"))
+    local tabName = (bank and bank.tabs[state.tab] and bank.tabs[state.tab].name) or ("Onglet " .. state.tab)
+    f.wd:SetText(("Retraits journaliers restants pour %s : %s%s"):format(tabName,
+      n < 0 and "illimités" or (n .. " pile" .. (n > 1 and "s" or "")),
+      today and "" or "  |cffaaaaaa(relevé un autre jour)|r"))
   else
-    f.wd:SetText(gridMode and "|cffaaaaaaTes retraits : ouvre le coffre une fois|r" or "")
+    f.wd:SetText(gridMode and "|cffaaaaaaRetraits journaliers : ouvre le coffre une fois|r" or "")
   end
   grid:SetShown(gridMode); listFrame:SetShown(not gridMode)
   if gridMode then refreshGrid(bank) else buildList(bank); refreshList(); f.empty:Hide() end
