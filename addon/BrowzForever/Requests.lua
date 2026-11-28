@@ -144,9 +144,23 @@ local function mineToDeliver(r)
 end
 
 -- Réception ----------------------------------------------------------------------------------------
-BF.OnMessage("R", function(data)
+-- Qui peut envoyer cette version d'une demande : le demandeur (créer, annuler), un officier, un pont (décisions
+-- prises sur Discord). Les copies relayées par le « réveil » (relayed) ne sont pas vérifiées : on fait confiance
+-- à ce que les membres ont vu (l'auteur peut être hors ligne).
+local function allowed(r, sender)
+  if not sender then return true end
+  if BF.IsOfficerName(sender) or BF.IsBridge(sender) or BF.SameName(sender, r.by) then return true end
+  if BF.SameName(sender, r.who) then return r.status == "attente" or r.status == "annulee" end
+  return false
+end
+
+function Req.Receive(data, sender, relayed)
   local r = Req.Parse(data)
   if not r then return end
+  if not relayed and not allowed(r, sender) then
+    BF.Debug(("Demande ignorée : %s ne peut pas la passer à « %s »."):format(tostring(sender), r.status))
+    return
+  end
   local old = db()[r.id]
   if not store(r) then return end
   if BF.Bridge.IsOn() then BF.Bridge.Emit("R", data) end
@@ -166,14 +180,16 @@ BF.OnMessage("R", function(data)
     BF.Print(("Ta demande (%s) : %s%s|r%s"):format(Req.ItemsText(r.items), st[2], st[1],
       r.by and (" par " .. short(r.by)) or ""))
   end
-end)
+end
+BF.OnMessage("R", function(data, sender) Req.Receive(data, sender, false) end)
 
 -- À la connexion et quand un pont arrive : chacun renvoie ses demandes ouvertes (et les officiers
 -- celles dont ils s'occupent), pour que tout le monde soit à jour.
 local function resendOpen()
   local me = BF.MyName()
   for _, r in pairs(db()) do
-    if not FINAL[r.status] and (r.who == me or r.by == me or BF.IsOfficer()) then BF.Send("R", Req.Serialize(r)) end
+    -- simple renvoi (pas une action) : passe comme une copie relayée (« ZR »)
+    if not FINAL[r.status] and (r.who == me or r.by == me or BF.IsOfficer()) then BF.Send("ZR", Req.Serialize(r)) end
   end
 end
 BF.OnActive(function() C_Timer.After(6 + math.random() * 6, resendOpen) end)

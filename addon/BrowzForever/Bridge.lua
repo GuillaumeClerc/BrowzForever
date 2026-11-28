@@ -98,7 +98,8 @@ BF.OnMessage("A", function(id)
 end)
 
 -- « P » = un pont vient d'arriver : on lui renvoie nos passages pas encore confirmés
-BF.OnMessage("P", function()
+BF.OnMessage("P", function(_, sender)
+  BF.SeenBridge(sender)
   C_Timer.After(2 + math.random() * 5, function()
     for _, it in pairs(db().outbox) do
       if it.mine and not it.acked then BF.Send("E", it.data) end

@@ -48,6 +48,10 @@ f.info = bdg:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
 f.info:SetPoint("TOPLEFT", 14, -32); f.info:SetPoint("TOPRIGHT", -246, -32)
 f.info:SetJustifyH("LEFT")
 
+-- Retraits qu'il me reste aujourd'hui (relevés à mon dernier passage au coffre), à droite des onglets
+f.wd = bdg:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+f.wd:SetPoint("TOPRIGHT", -16, -84); f.wd:SetJustifyH("RIGHT")
+
 f.modeBtn = CreateFrame("Button", nil, bdg, "UIPanelButtonTemplate")
 f.modeBtn:SetSize(92, 20)
 f.modeBtn:SetPoint("TOPRIGHT", -12, -28)
@@ -287,6 +291,16 @@ function f.Refresh()
       b:Show()
     end
   end
+  -- retraits restants pour MOI sur l'onglet affiché (vue coffre)
+  local w = BrowzForeverDB.withdrawals and BrowzForeverDB.withdrawals[BF.MyName()]
+  local today = w and date("%Y%m%d", w.t) == date("%Y%m%d", GetServerTime())
+  if gridMode and w and w.tabs and w.tabs[state.tab] ~= nil then
+    local n = w.tabs[state.tab]
+    f.wd:SetText(("Tes retraits ici : %s%s"):format(n < 0 and "illimités" or (n .. " pile" .. (n > 1 and "s" or "")),
+      today and ("  |cffaaaaaa(au coffre à %s)|r"):format(date("%H:%M", w.t)) or "  |cffaaaaaa(à vérifier : relevé un autre jour)|r"))
+  else
+    f.wd:SetText(gridMode and "|cffaaaaaaTes retraits : ouvre le coffre une fois|r" or "")
+  end
   grid:SetShown(gridMode); listFrame:SetShown(not gridMode)
   if gridMode then refreshGrid(bank) else buildList(bank); refreshList(); f.empty:Hide() end
 end
@@ -335,3 +349,26 @@ function BF.ToggleMain()
 end
 
 BF.commands["bdg"] = function() BF.OpenMain("bdg") end
+
+-- À chaque passage au coffre : retraits qu'il me reste par onglet (et en or), pour les afficher hors du coffre
+local function recordWithdrawals()
+  local tabs = {}
+  for t = 1, (GetNumGuildBankTabs() or 0) do
+    local _, _, viewable, _, _, remaining = GetGuildBankTabInfo(t)
+    if viewable and remaining then tabs[t] = remaining end
+  end
+  if not next(tabs) then return end                -- coffre pas encore chargé : on garde le dernier relevé
+  BrowzForeverDB.withdrawals = BrowzForeverDB.withdrawals or {}
+  BrowzForeverDB.withdrawals[BF.MyName()] = { t = GetServerTime(), tabs = tabs,
+    money = GetGuildBankWithdrawMoney and GetGuildBankWithdrawMoney() or nil }
+  if f.Refresh then f.Refresh() end
+end
+BF.Bank.OnLoaded(recordWithdrawals)
+local wdFrame, wdPending = CreateFrame("Frame"), false
+wdFrame:RegisterEvent("GUILDBANKBAGSLOTS_CHANGED")
+wdFrame:RegisterEvent("GUILDBANK_UPDATE_WITHDRAWMONEY")
+wdFrame:SetScript("OnEvent", function()          -- un retrait pendant la visite : relevé mis à jour
+  if wdPending or not BF.Bank.IsReady() then return end
+  wdPending = true
+  C_Timer.After(1, function() wdPending = false; if BF.Bank.IsReady() then recordWithdrawals() end end)
+end)

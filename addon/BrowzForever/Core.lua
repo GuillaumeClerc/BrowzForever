@@ -2,7 +2,7 @@
 local ADDON, BF = ...
 _G.BrowzForever = BF
 
-BF.VERSION = "0.15.1"
+BF.VERSION = "0.16.0"
 BF.GUILD_NAME = "Browz Forever"   -- l'addon ne fait rien en dehors de cette guilde
 
 local function defaults()
@@ -37,6 +37,32 @@ function BF.IsOfficer()
   if C_GuildInfo and C_GuildInfo.CanViewOfficerNote then return C_GuildInfo.CanViewOfficerNote() and true or false end
   return false
 end
+
+-- Qui a le droit de quoi (messages reçus des autres membres) ------------------------------------------
+BF.OFFICER_RANKS = { ["Préz suprême"] = true, ["Ambazadeur"] = true }
+local function bare(name) return (tostring(name or ""):gsub("%-.*$", "")) end
+function BF.SameName(a, b) return a ~= nil and b ~= nil and bare(a) == bare(b) end
+local ranks, ranksAt = {}, -100
+function BF.RankOf(name)
+  if GetTime() - ranksAt > 30 then
+    ranks, ranksAt = {}, GetTime()
+    for i = 1, (GetNumGuildMembers and GetNumGuildMembers() or 0) do
+      local n, rankName, rankIndex = GetGuildRosterInfo(i)
+      if n then ranks[bare(n)] = { name = rankName, index = rankIndex } end
+    end
+  end
+  return ranks[bare(name)]
+end
+-- officier d'après son grade dans la liste de guilde (pour MOI : C_GuildInfo, plus fiable)
+function BF.IsOfficerName(name)
+  if BF.SameName(name, BF.MyName()) then return BF.IsOfficer() end
+  local r = BF.RankOf(name)
+  return r ~= nil and (r.index == 0 or BF.OFFICER_RANKS[r.name] == true)
+end
+-- ponts vus récemment (message « P » ou « H » d'un pont) : ils relaient ce qui a été fait sur Discord
+BF.bridges = {}
+function BF.SeenBridge(name) if name then BF.bridges[bare(name)] = GetTime() end end
+function BF.IsBridge(name) local t = BF.bridges[bare(name)]; return t ~= nil and GetTime() - t < 12 * 3600 end
 
 local listeners = {}
 function BF.OnActive(fn) listeners[#listeners + 1] = fn end

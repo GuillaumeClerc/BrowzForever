@@ -193,12 +193,14 @@ function Profile.Publish(mode)
   end
 end
 
-BF.OnMessage("C", function(data)
+function Profile.Receive(data, sender, relayed)
   local card = Profile.Parse(data)
   if not card or not card.name then return end
+  if not relayed and sender and not BF.SameName(sender, card.name) then return end   -- chacun n'envoie que sa fiche
   if BF.Bridge.IsOn() then BF.Send("K", card.name .. "#" .. cardHash(data)) end   -- accusé pour l'envoyeur
   if store(card, data) and BF.Bridge.IsOn() then BF.Bridge.Emit("C", data) end
-end)
+end
+BF.OnMessage("C", function(data, sender) Profile.Receive(data, sender, false) end)
 
 -- Accusé d'un pont : notre fiche est arrivée, inutile de la renvoyer tant qu'elle ne change pas
 BF.OnMessage("K", function(msg)

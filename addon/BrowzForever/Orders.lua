@@ -134,11 +134,40 @@ local function notify(o, old)
   end
 end
 
-BF.OnMessage("O", function(data)
+-- Qui peut envoyer cette version d'une commande (messages directs ; les copies du « réveil » ne sont pas vérifiées) :
+--   officier ou pont : tout ; demandeur : la créer, refuser/accepter la commission, annuler, payer, livrée (échange) ;
+--   artisan : la prendre (lui-même), abandonner, fabriquée, payée sans commission, livrée.
+local BY_REQUESTER = { ouverte = true, prise = true, annulee = true, payee = true, livree = true }
+local BY_CRAFTER = { proposee = true, prise = true, ouverte = true, fabriquee = true, payee = true, livree = true }
+local function allowed(o, sender, cur)
+  if not sender then return true end
+  if BF.IsOfficerName(sender) or BF.IsBridge(sender) then return true end
+  local st = o.status
+  if BF.SameName(sender, o.who) and not BF.SameName(sender, o.crafter) then
+    if not BY_REQUESTER[st] then return false end
+    if st == "prise" then return cur ~= nil and cur.status == "proposee" and BF.SameName(cur.crafter, o.crafter) end
+    return true
+  end
+  local crafterNow, crafterBefore = BF.SameName(sender, o.crafter), cur ~= nil and BF.SameName(sender, cur.crafter)
+  if crafterNow or crafterBefore then
+    if not BY_CRAFTER[st] then return false end
+    if st == "prise" and cur and cur.status == "proposee" then return false end      -- c'est au demandeur d'accepter
+    if st == "payee" and (o.fee or 0) > 0 and not (cur and cur.status == "payee") then return false end
+    if st == "ouverte" and o.crafter then return false end                            -- abandon = artisan retiré
+    return true
+  end
+  return false
+end
+
+function Ord.Receive(data, sender, relayed)
   local o = Ord.Parse(data)
   if not o then return end
-  local old = db()[o.id]
-  old = old and { status = old.status } or nil
+  local cur = db()[o.id]
+  if not relayed and not allowed(o, sender, cur) then
+    BF.Debug(("Commande ignorée : %s ne peut pas la passer à « %s »."):format(tostring(sender), o.status))
+    return
+  end
+  local old = cur and { status = cur.status } or nil
   if store(o) then
     if BF.Bridge.IsOn() then BF.Bridge.Emit("O", data) end
     if not old and o.status == "ouverte" and Craft.CanCraft(me(), o.prof, o.recipe) then
@@ -147,12 +176,14 @@ BF.OnMessage("O", function(data)
     notify(o, old)
     changed()
   end
-end)
+end
+BF.OnMessage("O", function(data, sender) Ord.Receive(data, sender, false) end)
 
 -- Renvoi des commandes en cours (connexion, arrivée d'un pont)
 local function resendOpen()
   for _, o in pairs(db()) do
-    if not FINAL[o.status] and (o.who == me() or o.crafter == me()) then BF.Send("O", Ord.Serialize(o)) end
+    -- simple renvoi (pas une action) : passe comme une copie relayée (« ZO »)
+    if not FINAL[o.status] and (o.who == me() or o.crafter == me()) then BF.Send("ZO", Ord.Serialize(o)) end
   end
 end
 BF.OnMessage("P", function() C_Timer.After(4 + math.random() * 8, resendOpen) end)
@@ -165,7 +196,7 @@ local function loadInbox()
       local old = db()[o.id]
       old = old and { status = old.status } or nil
       if store(o) then
-        BF.Send("O", data)                 -- les autres membres la reçoivent aussi
+        BF.Send("ZO", data)                -- les autres membres la reçoivent aussi (copie relayée)
         notify(o, old)
         n = n + 1
       end

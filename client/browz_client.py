@@ -21,6 +21,11 @@ import urllib.request
 
 CLIENT_VERSION = 15                             # à publier sur GitHub avec l'étiquette « client-v15 »
 UPDATE_URL = "https://api.github.com/repos/GuillaumeClerc/BrowzForever/releases?per_page=20"
+# Clé publique de signature des versions (la clé privée reste chez Bellock, voir signer.py) : une mise à jour n'est
+# installée que si BrowzClient.exe.sig correspond. RSA 3072, PKCS#1 v1.5, SHA-256.
+UPDATE_KEY_N = int(
+    "539d861e5dd0ad08911600a1bfd8a6490c1f06e6028a904bf6cfa4b3cf5a6549c66c0c8b0e6ceff1c17a3ae34a82fee67fc510162b63275812de34b74e136c9afdada0335d4084bf658571de22ceb7c5236f12d80cc281e42dd6ffd5c5d928d83dcc8ea1b2ad2960281b5b44e73a06b92c36514abdb6ee8098b63e3ee5ba027b1336f7caa2f3e91faf93630c98f37b4a76d9c44393646b5c839f994bb3a56c3fd3b56c85367fdfe2368814e403f379c1b1dcd9ad69c67930b62ffec4612054246a49621f8906c3f8afc8fc08078ec22c2f91d51d63dd2f2959e21418fc477662da919947e9fa01492266b654fdd1eae037550a0926655f577a58f6eec06254faf29916ecf55d5ca5cfce1d44954b8c0e294061f969516a599840f45f5291d33d4c2366f51996c2d0ad5ac3a6d24c10b9d8696037f84bb402a97935f48bd2798d63554b3981aa488f28c7fc3dca6d0397bfdf90f1f0bb188ac884cbb9e936001dc8325ac75efbd0c092a44ad1d146c32c347f9557beaca11585323a80f20905dd", 16)
+UPDATE_KEY_E = 65537
 FROZEN = getattr(sys, "frozen", False)          # True dans BrowzClient.exe (PyInstaller)
 HERE = os.path.dirname(sys.executable if FROZEN else os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -112,6 +117,21 @@ def load_config():
 # ---------------------------------------------------------------- mise à jour automatique (exe seulement)
 # Le client regarde les « Releases » du dépôt GitHub : s'il y trouve une version plus récente (étiquette
 # « client-vNN » avec un fichier BrowzClient.exe), il la télécharge, prend sa place et redémarre tout seul.
+def signature_ok(data, sig_hex):
+    """Vérifie la signature RSA (PKCS#1 v1.5, SHA-256) d'un exe téléchargé avec la clé publique ci-dessus."""
+    import hashlib
+    try:
+        sig = bytes.fromhex(sig_hex.strip())
+    except ValueError:
+        return False
+    k = (UPDATE_KEY_N.bit_length() + 7) // 8
+    if len(sig) != k:
+        return False
+    em = pow(int.from_bytes(sig, "big"), UPDATE_KEY_E, UPDATE_KEY_N).to_bytes(k, "big")
+    t = bytes.fromhex("3031300d060960864801650304020105000420") + hashlib.sha256(data).digest()
+    return em == b"\x00\x01" + b"\xff" * (k - len(t) - 3) + b"\x00" + t
+
+
 def check_update(lock):
     if not FROZEN:
         return
@@ -121,14 +141,15 @@ def check_update(lock):
             releases = json.loads(r.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, ValueError):
         return
-    best, url = CLIENT_VERSION, None
+    best, url, sig_url = CLIENT_VERSION, None, None
     for rel in releases if isinstance(releases, list) else []:
         m = re.match(r"^client-v(\d+)$", str(rel.get("tag_name", "")))
         if not m or rel.get("draft") or rel.get("prerelease") or int(m.group(1)) <= best:
             continue
         asset = next((a for a in rel.get("assets", []) if a.get("name") == "BrowzClient.exe"), None)
-        if asset:
-            best, url = int(m.group(1)), asset.get("browser_download_url")
+        sig = next((a for a in rel.get("assets", []) if a.get("name") == "BrowzClient.exe.sig"), None)
+        if asset and sig:
+            best, url, sig_url = int(m.group(1)), asset.get("browser_download_url"), sig.get("browser_download_url")
     if not url or not url.startswith("https://github.com/GuillaumeClerc/BrowzForever/"):
         return
     exe = sys.executable
@@ -136,11 +157,17 @@ def check_update(lock):
     try:
         log("Nouvelle version du client (v%d) : téléchargement…" % best)
         req = urllib.request.Request(url, headers={"User-Agent": "BrowzClient"})
-        with urllib.request.urlopen(req, timeout=120) as r, open(new, "wb") as f:
-            f.write(r.read())
-        with open(new, "rb") as f:
-            if f.read(2) != b"MZ" or os.path.getsize(new) < 1_000_000:
-                raise OSError("fichier téléchargé invalide")
+        with urllib.request.urlopen(req, timeout=120) as r:
+            data = r.read()
+        req = urllib.request.Request(sig_url, headers={"User-Agent": "BrowzClient"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            sig_hex = r.read().decode("ascii", "replace")
+        if data[:2] != b"MZ" or len(data) < 1_000_000:
+            raise OSError("fichier téléchargé invalide")
+        if not signature_ok(data, sig_hex):
+            raise OSError("signature invalide : cette version n'a pas été signée par Bellock, elle est ignorée")
+        with open(new, "wb") as f:
+            f.write(data)
         if os.path.exists(old):
             os.remove(old)
         os.replace(exe, old)          # Windows permet de renommer un exe en cours d'exécution
@@ -602,6 +629,8 @@ class Sender:
 
     def push(self, kind, payload):
         self.pending.append({"kind": kind, "payload": payload})
+        if len(self.pending) > 300:          # bot injoignable longtemps : on garde les 300 derniers envois
+            del self.pending[:len(self.pending) - 300]
 
     def flush(self):
         if not self.pending:
@@ -739,9 +768,20 @@ def write_inbox(wow, inbox, state):
             % (int(time.time()), "\n".join(rows), "\n".join(drows), "\n".join(orows)))
     if state.get("inbox_body") == body:
         return
-    path = os.path.join(wow, "Interface", "AddOns", "BrowzForever", "Inbox.lua")
-    if not os.path.isdir(os.path.dirname(path)):
+    # addon séparé « BrowzForever_Inbox » : une mise à jour de BrowzForever (CurseForge) ne l'efface pas
+    folder = os.path.join(wow, "Interface", "AddOns", "BrowzForever_Inbox")
+    if not os.path.isdir(os.path.join(wow, "Interface", "AddOns", "BrowzForever")):
         return
+    path = os.path.join(folder, "Inbox.lua")
+    toc = os.path.join(folder, "BrowzForever_Inbox.toc")
+    if not os.path.exists(toc):
+        os.makedirs(folder, exist_ok=True)
+        with open(toc, "w", encoding="utf-8") as f:
+            f.write("## Interface: 16001\n## Title: Browz Forever (boîte de réception)\n"
+                    "## Notes: Écrit par le client pont : demandes et commandes faites sur Discord. Ne pas modifier.\n"
+                    "## Author: Bellock (Guillaume Clerc)\nInbox.lua\n")
+        log("Addon « BrowzForever_Inbox » créé : redémarre complètement le jeu une fois pour qu'il le voie.")
+        state.pop("inbox_body", None)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(text)

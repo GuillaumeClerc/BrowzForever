@@ -332,8 +332,8 @@ end)
 BF.OnActive(function()
   C_Timer.After(8 + math.random() * 4, function()
     local m = Bank.Get()
-    -- heure de ma photo de la banque ; puis ce que je connais de plus récent (demandes, commandes, recettes, fiches)
-    local rel = BF.Relay and BF.Relay.Maxima() or {}
-    BF.Send("H", tostring(m and m.time or 0) .. ";" .. table.concat(rel, ";"))
+    -- heure de ma photo de la banque ; puis l'empreinte de ce que je connais (demandes, commandes, recettes, fiches)
+    local rel = BF.Relay and BF.Relay.Hashes() or { "", "", "", "" }
+    BF.Send("H", tostring(m and m.time or 0) .. ";" .. table.concat(rel, ";") .. ";" .. (BF.Bridge.IsOn() and "pont" or ""))
   end)
 end)

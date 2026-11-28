@@ -110,9 +110,10 @@ scanFrame:SetScript("OnEvent", function()
 end)
 
 -- Réception des recettes des autres ---------------------------------------------------------------
-BF.OnMessage("W", function(data)
+function Craft.Receive(data, sender, relayed)
   local v, name, prof, s, t, ids = strsplit("^", data)
   if v ~= "1" or not name then return end
+  if not relayed and sender and not BF.SameName(sender, name) then return end   -- chacun n'envoie que ses recettes
   prof, s, t = tonumber(prof), tonumber(s), tonumber(t)
   if not prof then return end
   local c = crafters()[name] or { profs = {} }
@@ -123,7 +124,8 @@ BF.OnMessage("W", function(data)
   crafters()[name] = c
   if BF.Bridge.IsOn() then BF.Bridge.Emit("W", data) end
   changed()
-end)
+end
+BF.OnMessage("W", function(data, sender) Craft.Receive(data, sender, false) end)
 
 -- À la connexion : on renvoie nos recettes connues (et quand un pont arrive)
 local function resendMine()

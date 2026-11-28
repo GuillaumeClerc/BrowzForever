@@ -1,0 +1,5 @@
+## Interface: 16001
+## Title: Browz Forever (boîte de réception)
+## Notes: Écrit par le client pont : demandes et commandes faites sur Discord. Ne pas modifier.
+## Author: Bellock (Guillaume Clerc)
+Inbox.lua

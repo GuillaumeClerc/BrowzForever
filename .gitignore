@@ -1,4 +1,5 @@
 # Secrets et données : ne JAMAIS publier
+signature_privee.json
 config_bot.json
 config.json
 donnees.json
@@ -22,3 +23,4 @@ dist/
 *.exe
 *.log
 *.log.old
+*.sig

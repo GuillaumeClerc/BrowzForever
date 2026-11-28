@@ -12,8 +12,15 @@ if errorlevel 1 goto err
 copy /y "dist\BrowzClient.exe" "BrowzClient.exe" >nul
 rmdir /s /q build 2>nul
 del /q BrowzClient.spec 2>nul
+if exist "signature_privee.json" (
+  py signer.py BrowzClient.exe
+  if errorlevel 1 goto err
+) else (
+  echo ATTENTION : signature_privee.json absent, BrowzClient.exe n est pas signe : les clients refuseront la mise a jour.
+)
 echo.
-echo OK : BrowzClient.exe est pret dans ce dossier.
+echo OK : BrowzClient.exe et BrowzClient.exe.sig sont prets dans ce dossier.
+echo Release GitHub : etiquette client-vNN, joindre LES DEUX fichiers (BrowzClient.exe et BrowzClient.exe.sig).
 pause
 exit /b 0
 :err
