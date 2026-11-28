@@ -256,34 +256,80 @@ function Ord.RequestComponents(o)
   BF.Requests.Create(items, ("Craft « %s » pour %s"):format(Ord.Name(o), short(o.who)))
 end
 
--- Fenêtre « Nouvelle commande » --------------------------------------------------------------------
+-- Fenêtre « Nouvelle commande » : s'ouvre à côté de la fenêtre Browz Forever -------------------------
+-- Grande icône de l'objet (infobulle du jeu), quantité, composants en icônes (infobulles, stock en BDG),
+-- artisans, et une vraie zone de texte pour l'explication.
+local NW_W = 340
 local nw = CreateFrame("Frame", "BrowzForeverOrderNew", UIParent, "BasicFrameTemplateWithInset")
-nw:SetSize(360, 330); nw:SetPoint("CENTER"); nw:SetFrameStrata("DIALOG"); nw:Hide()
-nw:SetMovable(true); nw:EnableMouse(true); nw:RegisterForDrag("LeftButton")
+nw:SetSize(NW_W, 480); nw:SetPoint("CENTER"); nw:SetFrameStrata("DIALOG"); nw:Hide()
+nw:SetMovable(true); nw:EnableMouse(true); nw:RegisterForDrag("LeftButton"); nw:SetClampedToScreen(true)
 nw:SetScript("OnDragStart", nw.StartMoving); nw:SetScript("OnDragStop", nw.StopMovingOrSizing)
 tinsert(UISpecialFrames, "BrowzForeverOrderNew")
 nw.title = nw:CreateFontString(nil, "OVERLAY", "GameFontHighlight"); nw.title:SetPoint("TOP", 0, -5)
-nw.title:SetText("Nouvelle commande de craft")
-nw.name = nw:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-nw.name:SetPoint("TOPLEFT", 16, -34); nw.name:SetPoint("RIGHT", -16, 0); nw.name:SetJustifyH("LEFT")
-local qLabel = nw:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); qLabel:SetPoint("TOPLEFT", 16, -62)
-qLabel:SetText("Quantité :")
-nw.qty = CreateFrame("EditBox", nil, nw, "InputBoxTemplate")
-nw.qty:SetSize(36, 20); nw.qty:SetPoint("LEFT", qLabel, "RIGHT", 34, 0); nw.qty:SetAutoFocus(false); nw.qty:SetNumeric(true)
+nw.title:SetText("Demande de craft")
+
+nw.icon = Craft.ItemButton(nw, 44); nw.icon:SetPoint("TOPLEFT", 16, -34)
+nw.name = nw:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+nw.name:SetPoint("TOPLEFT", nw.icon, "TOPRIGHT", 10, -2); nw.name:SetPoint("RIGHT", -14, 0); nw.name:SetJustifyH("LEFT")
+nw.sub = nw:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+nw.sub:SetPoint("TOPLEFT", nw.name, "BOTTOMLEFT", 0, -4); nw.sub:SetPoint("RIGHT", -14, 0); nw.sub:SetJustifyH("LEFT")
+nw.hint = nw:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+nw.hint:SetPoint("TOPLEFT", nw.sub, "BOTTOMLEFT", 0, -2); nw.hint:SetText("Survole l'icône pour voir l'objet")
+
+local qLabel = nw:CreateFontString(nil, "OVERLAY", "GameFontNormal"); qLabel:SetPoint("TOPLEFT", 18, -94)
+qLabel:SetText("Quantité")
 local minus = CreateFrame("Button", nil, nw, "UIPanelButtonTemplate"); minus:SetSize(22, 20)
-minus:SetPoint("RIGHT", nw.qty, "LEFT", -8, 0); minus:SetText("-")
+minus:SetPoint("LEFT", qLabel, "RIGHT", 14, 0); minus:SetText("-")
+nw.qty = CreateFrame("EditBox", nil, nw, "InputBoxTemplate")
+nw.qty:SetSize(32, 20); nw.qty:SetPoint("LEFT", minus, "RIGHT", 8, 0); nw.qty:SetAutoFocus(false); nw.qty:SetNumeric(true)
+nw.qty:SetJustifyH("CENTER")
 local plus = CreateFrame("Button", nil, nw, "UIPanelButtonTemplate"); plus:SetSize(22, 20)
 plus:SetPoint("LEFT", nw.qty, "RIGHT", 4, 0); plus:SetText("+")
-local wLabel = nw:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall"); wLabel:SetPoint("TOPLEFT", 16, -92)
-wLabel:SetText("Explication (ex. « pour mon tank »)")
-nw.why = CreateFrame("EditBox", nil, nw, "InputBoxTemplate")
-nw.why:SetSize(320, 20); nw.why:SetPoint("TOPLEFT", 22, -108); nw.why:SetAutoFocus(false); nw.why:SetMaxLetters(120)
-nw.comp = nw:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-nw.comp:SetPoint("TOPLEFT", 16, -140); nw.comp:SetPoint("RIGHT", -16, 0)
-nw.comp:SetJustifyH("LEFT"); nw.comp:SetJustifyV("TOP"); nw.comp:SetSpacing(2)
-local send = CreateFrame("Button", nil, nw, "UIPanelButtonTemplate"); send:SetSize(120, 22)
-send:SetPoint("BOTTOMRIGHT", -14, 12); send:SetText("Publier")
-local cancel = CreateFrame("Button", nil, nw, "UIPanelButtonTemplate"); cancel:SetSize(100, 22)
+
+local cLabel = nw:CreateFontString(nil, "OVERLAY", "GameFontNormal"); cLabel:SetPoint("TOPLEFT", 18, -124)
+cLabel:SetText("Composants")
+local cHint = nw:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall"); cHint:SetPoint("LEFT", cLabel, "RIGHT", 8, 0)
+cHint:SetText("(il en faut · en BDG)")
+nw.comps = {}
+for i = 1, 8 do
+  local col, line = (i - 1) % 2, math.floor((i - 1) / 2)
+  local b = Craft.ItemButton(nw, 28)
+  b:SetPoint("TOPLEFT", 18 + col * 156, -142 - line * 34)
+  b.label = nw:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.label:SetPoint("TOPLEFT", b, "TOPRIGHT", 6, -1); b.label:SetWidth(118); b.label:SetJustifyH("LEFT"); b.label:SetWordWrap(false)
+  b.stock = nw:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  b.stock:SetPoint("BOTTOMLEFT", b, "BOTTOMRIGHT", 6, 1)
+  b:Hide()
+  nw.comps[i] = b
+end
+nw.compState = nw:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+nw.compState:SetPoint("TOPLEFT", 18, -282); nw.compState:SetPoint("RIGHT", -14, 0)
+nw.compState:SetJustifyH("LEFT"); nw.compState:SetJustifyV("TOP"); nw.compState:SetSpacing(2)
+
+nw.who = nw:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+nw.who:SetPoint("TOPLEFT", nw.compState, "BOTTOMLEFT", 0, -6); nw.who:SetPoint("RIGHT", -14, 0)
+nw.who:SetJustifyH("LEFT"); nw.who:SetWordWrap(true)
+
+-- zone de texte (plusieurs lignes à l'écran, envoyée sur une seule)
+local wLabel = nw:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+wLabel:SetPoint("BOTTOMLEFT", 18, 104); wLabel:SetText("Explication")
+local wHint = nw:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall"); wHint:SetPoint("LEFT", wLabel, "RIGHT", 8, 0)
+wHint:SetText("(pour qui, pourquoi, délai…)")
+local box = CreateFrame("Frame", nil, nw, "BackdropTemplate")
+box:SetPoint("BOTTOMLEFT", 16, 42); box:SetPoint("BOTTOMRIGHT", -16, 42); box:SetHeight(58)
+box:SetBackdrop({ bgFile = "Interface\\Tooltips\\UI-Tooltip-Background", edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                  tile = true, tileSize = 16, edgeSize = 12, insets = { left = 3, right = 3, top = 3, bottom = 3 } })
+box:SetBackdropColor(0, 0, 0, 0.6); box:SetBackdropBorderColor(0.6, 0.6, 0.6)
+nw.why = CreateFrame("EditBox", nil, box)
+nw.why:SetMultiLine(true); nw.why:SetAutoFocus(false); nw.why:SetMaxLetters(150)
+nw.why:SetFontObject(ChatFontNormal); nw.why:SetPoint("TOPLEFT", 8, -6); nw.why:SetPoint("BOTTOMRIGHT", -8, 6)
+nw.why:SetWidth(NW_W - 48)
+nw.why.count = box:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall"); nw.why.count:SetPoint("BOTTOMRIGHT", -6, 4)
+box:EnableMouse(true); box:SetScript("OnMouseDown", function() nw.why:SetFocus() end)
+
+local send = CreateFrame("Button", nil, nw, "UIPanelButtonTemplate"); send:SetSize(130, 24)
+send:SetPoint("BOTTOMRIGHT", -14, 12); send:SetText("Publier la demande")
+local cancel = CreateFrame("Button", nil, nw, "UIPanelButtonTemplate"); cancel:SetSize(90, 24)
 cancel:SetPoint("RIGHT", send, "LEFT", -8, 0); cancel:SetText(CANCEL or "Annuler")
 cancel:SetScript("OnClick", function() nw:Hide() end)
 
@@ -298,27 +344,43 @@ local function refreshNew()
   local q = math.max(1, tonumber(nw.qty:GetText()) or 1)
   local o = { prof = nw.prof, recipe = nw.recipe, qty = q }
   local list, all = Ord.Components(o)
-  local lines = { "|cffffd100Composants|r (il en faut · en BDG)" }
-  for _, c in ipairs(list) do
-    lines[#lines + 1] = ("%s%d × %s|r  (%d)"):format(c.bank >= c.n and "|cff33ff33" or "|cffff5555", c.n, itemName(c.id), c.bank)
+  for i, b in ipairs(nw.comps) do
+    local c = list[i]
+    if c then
+      b:SetItem(c.id, c.n)
+      b.label:SetText(itemName(c.id))
+      local ok = c.bank >= c.n
+      b.stock:SetText(("%s%d|r |cff999999/ %d en BDG|r"):format(ok and "|cff33ff33" or "|cffff5555", c.n, c.bank))
+      b:Show(); b.label:Show(); b.stock:Show()
+    else
+      b:Hide(); b.label:Hide(); b.stock:Hide()
+    end
   end
-  lines[#lines + 1] = ""
-  if all then
-    lines[#lines + 1] = "|cff33ff33Tout est en BDG : ces composants seront utilisés pour ta commande.|r"
+  if #list == 0 then
+    nw.compState:SetText("|cff999999Composants inconnus pour cette recette.|r")
+  elseif all then
+    nw.compState:SetText("|cff33ff33Tout est en BDG : ces composants serviront pour ta commande.|r")
   else
-    lines[#lines + 1] = "|cffff9933Il manque des composants en BDG.|r Dépose-les en BDG (la commande se met à jour " ..
-      "toute seule), ou l'artisan qui la prend s'en chargera, éventuellement contre une commission."
+    nw.compState:SetText("|cffff9933Il manque des composants en BDG.|r Dépose-les (la commande se met à jour toute " ..
+      "seule), ou l'artisan s'en chargera, éventuellement contre une commission.")
   end
-  nw.comp:SetText(table.concat(lines, "\n"))
+  local names = {}
+  for i, w in ipairs(Craft.CraftersFor(nw.prof, nw.recipe)) do
+    if i > 4 then names[#names + 1] = "…"; break end
+    names[#names + 1] = Craft.Short(w.name) .. (Craft.KIND_TAG[w.kind] or "")
+  end
+  nw.who:SetText("|cffffd100Artisans :|r " .. (#names > 0 and table.concat(names, ", ") or "aucun connu"))
 end
 nw.qty:SetScript("OnTextChanged", refreshNew)
 minus:SetScript("OnClick", function() nw.qty:SetText(math.max(1, (tonumber(nw.qty:GetText()) or 1) - 1)) end)
 plus:SetScript("OnClick", function() nw.qty:SetText(math.min(99, (tonumber(nw.qty:GetText()) or 1) + 1)) end)
 nw.why:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+nw.why:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)   -- pas de retour à la ligne : une seule ligne envoyée
+nw.why:SetScript("OnTextChanged", function(self) self.count:SetText(#(self:GetText() or "") .. "/150") end)
 nw.qty:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
 send:SetScript("OnClick", function()
-  local why = strtrim(nw.why:GetText() or "")
-  if why == "" then BF.Print("Ajoute une petite explication à ta commande."); return end
+  local why = strtrim(((nw.why:GetText() or ""):gsub("[\r\n]+", " ")))
+  if why == "" then BF.Print("Ajoute une petite explication à ta commande."); nw.why:SetFocus(); return end
   Ord.Create(nw.prof, nw.recipe, tonumber(nw.qty:GetText()) or 1, why)
   nw:Hide()
   if Ord.ShowOrders then Ord.ShowOrders() end
@@ -326,10 +388,23 @@ end)
 
 function Ord.OpenNew(prof, recipe)
   nw.prof, nw.recipe = prof, recipe
+  nw.icon:SetRecipe(prof, recipe)
   nw.name:SetText(Craft.RecipeName(prof, recipe))
+  local L = Craft.Lib()
+  nw.sub:SetText(("%s · niveau %s · %s"):format(Craft.PROF_NAMES[prof] or prof, (L and L:GetRequiredSkill(prof, recipe)) or "?",
+    Craft.CategoryOf(prof, recipe)))
   nw.qty:SetText("1"); nw.why:SetText("")
+  -- collée à droite de la fenêtre Browz Forever si elle est ouverte
+  nw:ClearAllPoints()
+  local main = BF.MainFrame
+  if main and main:IsShown() then
+    nw:SetPoint("TOPLEFT", main, "TOPRIGHT", 4, 0); nw:SetHeight(480)
+  else
+    nw:SetPoint("CENTER"); nw:SetHeight(480)
+  end
   refreshNew()
   nw:Show()
+  nw.why:SetFocus()
 end
 local nwItems = CreateFrame("Frame")
 nwItems:RegisterEvent("GET_ITEM_INFO_RECEIVED")

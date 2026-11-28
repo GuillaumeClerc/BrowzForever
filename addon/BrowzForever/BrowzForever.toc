@@ -3,7 +3,7 @@
 ## Notes: Outils de la guilde Browz Forever : banque de guilde partagée (/browz bdg).
 ## Author: Bellock (Guillaume Clerc)
 ## X-Copyright: (c) 2026 Guillaume Clerc (Bellock). Tous droits réservés.
-## Version: 0.16.1
+## Version: 0.17.0
 ## SavedVariables: BrowzForeverDB
 ## OptionalDeps: BrowzForever_Inbox
 Core.lua

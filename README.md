@@ -18,7 +18,7 @@ Pour le donner à un nouveau membre : onglet **Liaison → Lien de l'addon** (ou
 - **Talents** et **équipement** : visibles sur le Discord de la guilde (`/browz inspect`).
 - **Demandes** : demande des objets de la banque avec une explication ; les officiers acceptent, l'addon retire les objets et prépare le courrier.
 - **Banque (coffre)** : bouton **Ranger** à côté de la recherche du coffre (types d'onglet, fusion des piles, tri par familles).
-- **Craft** : qui sait fabriquer quoi dans la guilde (composants déjà en banque), et les **commandes de craft** (aussi sur Discord : `/browz commande`).
+- **Craft** : qui sait fabriquer quoi dans la guilde, par métier puis par catégorie (Explosifs, Pièces…) ou en cherchant le nom d'un objet, avec les composants déjà en banque ; et les **commandes de craft**, dans une fenêtre dédiée (aussi sur Discord : `/browz commande`).
 
 ## Pour tous ceux qui veulent aider : le pont
 
