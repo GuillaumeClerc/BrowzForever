@@ -74,9 +74,9 @@ def ask_config(cfg):
     root = tk.Tk()
     root.title("Browz Forever — client pont")
     root.resizable(False, False)
-    tk.Label(root, text="Ces informations te sont données par Bellock (en privé).", pady=6).grid(row=0, columnspan=3)
+    tk.Label(root, text="Ta clé : commande /browz cle sur le Discord de la guilde. L'adresse du bot : demande à Bellock.", pady=6).grid(row=0, columnspan=3)
     fields = {}
-    for i, (key, label) in enumerate((("bot_url", "Adresse du bot"), ("cle_guilde", "Clé de guilde"),
+    for i, (key, label) in enumerate((("bot_url", "Adresse du bot"), ("cle_guilde", "Clé de pont"),
                                        ("wow_path", "Dossier de WoW Forever")), start=1):
         tk.Label(root, text=label).grid(row=i, column=0, sticky="w", padx=8, pady=3)
         v = tk.StringVar(value=cfg.get(key) or (DEFAULT_WOW if key == "wow_path" else ""))

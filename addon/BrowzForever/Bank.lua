@@ -315,11 +315,14 @@ end)
 
 -- « H » = bonjour, avec l'heure de ma photo : le membre qui a plus récent répond
 BF.OnMessage("H", function(data)
-  local theirs = tonumber(data) or 0
+  local theirs = tonumber((strsplit(";", data or ""))) or 0      -- 1er champ = heure de sa photo de la banque
   local mine = Bank.Get()
   if not mine or not mine.time or mine.time <= theirs then return end
   if pendingAnswer then return end
-  pendingAnswer = C_Timer.NewTimer(1 + math.random() * 4, function()
+  -- un pont répond en premier ; sinon celui qui a la photo la plus récente (délai plus court), les autres se taisent
+  -- dès qu'une photo au moins aussi récente que la leur passe (voir « S »)
+  local age = math.min(6, (GetServerTime() - mine.time) / 3600)
+  pendingAnswer = C_Timer.NewTimer((BF.Bridge.IsOn() and 0.5 or 2) + age * 0.5 + math.random() * 2, function()
     pendingAnswer = nil
     local m = Bank.Get()
     if m then BF.Send("S", Bank.SerializeSnap(m)) end
@@ -329,6 +332,8 @@ end)
 BF.OnActive(function()
   C_Timer.After(8 + math.random() * 4, function()
     local m = Bank.Get()
-    BF.Send("H", tostring(m and m.time or 0))
+    -- heure de ma photo de la banque ; puis ce que je connais de plus récent (demandes, commandes, recettes, fiches)
+    local rel = BF.Relay and BF.Relay.Maxima() or {}
+    BF.Send("H", tostring(m and m.time or 0) .. ";" .. table.concat(rel, ";"))
   end)
 end)

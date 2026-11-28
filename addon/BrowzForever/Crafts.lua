@@ -53,6 +53,7 @@ local function learnedSet(name, prof)
 end
 
 -- Lecture de MES recettes quand une fenêtre de métier est ouverte -----------------------------------
+function Craft.Serialize(name, prof, p) return table.concat({ "1", name, prof, p.s or 0, p.t or 0, p.ids or "" }, "^") end
 local function serialize(name, prof, p)
   return table.concat({ "1", name, prof, p.s or 0, p.t or 0, p.ids or "" }, "^")
 end
