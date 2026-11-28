@@ -464,7 +464,7 @@ end
 local cart, cartOrder = {}, {}
 local CART_ROWS = 8
 local cw = CreateFrame("Frame", "BrowzForeverRequestCart", BF.MainFrame, "BasicFrameTemplateWithInset")
-cw:SetSize(320, 400)
+cw:SetSize(380, 400)
 cw:SetPoint("TOPLEFT", BF.MainFrame, "TOPRIGHT", 4, 0)
 cw:Hide()
 cw.title = cw:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
@@ -476,11 +476,11 @@ local cartRows = {}
 local function cartChanged() Req.RefreshCart() end
 for i = 1, CART_ROWS do
   local r = CreateFrame("Frame", nil, cw)
-  r:SetSize(292, 26); r:SetPoint("TOPLEFT", 14, -52 - (i - 1) * 28)
+  r:SetSize(352, 26); r:SetPoint("TOPLEFT", 14, -52 - (i - 1) * 28)
   r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(22, 22); r.icon:SetPoint("LEFT")
-  r.text = label(r); r.text:SetPoint("LEFT", r.icon, "RIGHT", 6, 0); r.text:SetPoint("RIGHT", -118, 0)
+  r.text = label(r); r.text:SetPoint("LEFT", r.icon, "RIGHT", 6, 0); r.text:SetPoint("RIGHT", -150, 0)
   r.qty = CreateFrame("EditBox", nil, r, "InputBoxTemplate")
-  r.qty:SetSize(40, 20); r.qty:SetPoint("RIGHT", -72, 0); r.qty:SetAutoFocus(false); r.qty:SetNumeric(true)
+  r.qty:SetSize(34, 20); r.qty:SetPoint("RIGHT", -88, 0); r.qty:SetAutoFocus(false); r.qty:SetNumeric(true)
   r.qty:SetMaxLetters(4); r.qty:SetJustifyH("CENTER")
   r.qty:SetScript("OnEnterPressed", r.qty.ClearFocus)
   r.qty:SetScript("OnEscapePressed", r.qty.ClearFocus)
@@ -491,7 +491,17 @@ for i = 1, CART_ROWS do
     cart[r.id] = n
     cartChanged()
   end)
-  r.max = label(r, "GameFontDisableSmall"); r.max:SetPoint("LEFT", r.qty, "RIGHT", 4, 0); r.max:SetWidth(42)
+  -- petits boutons − / + autour de la quantité (jamais moins de 1 ni plus que le stock)
+  local function bump(d)
+    if not r.id then return end
+    local stock = bankTotals()[r.id] or 0
+    cart[r.id] = math.max(1, math.min(stock, (cart[r.id] or 1) + d))
+    r.qty:ClearFocus()
+    cartChanged()
+  end
+  r.minus = button(r, "-", 20, function() bump(-1) end); r.minus:SetPoint("RIGHT", r.qty, "LEFT", -6, 0)
+  r.plus = button(r, "+", 20, function() bump(1) end); r.plus:SetPoint("LEFT", r.qty, "RIGHT", 2, 0)
+  r.max = label(r, "GameFontDisableSmall"); r.max:SetPoint("LEFT", r.plus, "RIGHT", 4, 0); r.max:SetWidth(30)
   r.one = label(r, "GameFontHighlight"); r.one:SetPoint("CENTER", r.qty, "CENTER")
   r.del = button(r, "x", 22, function()
     if not r.id then return end
@@ -516,7 +526,7 @@ local more = label(cw, "GameFontDisableSmall"); more:SetPoint("TOPLEFT", 16, -52
 local whyLabel = label(cw, "GameFontNormal"); whyLabel:SetPoint("TOPLEFT", 16, -52 - CART_ROWS * 28 - 16)
 whyLabel:SetText("Explication (ex. « pour monter mon métier »)")
 local why = CreateFrame("EditBox", nil, cw, "InputBoxTemplate")
-why:SetSize(282, 20); why:SetPoint("TOPLEFT", whyLabel, "BOTTOMLEFT", 6, -4); why:SetAutoFocus(false)
+why:SetSize(342, 20); why:SetPoint("TOPLEFT", whyLabel, "BOTTOMLEFT", 6, -4); why:SetAutoFocus(false)
 why:SetMaxLetters(150)
 why:SetScript("OnEscapePressed", why.ClearFocus)
 why:SetScript("OnEnterPressed", why.ClearFocus)
@@ -556,6 +566,7 @@ function Req.RefreshCart()
       row.icon:SetTexture(C_Item.GetItemIconByID(id)); row.text:SetText(itemLabel(id))
       local stackable = stock > 1
       row.qty:SetShown(stackable); row.max:SetShown(stackable); row.one:SetShown(not stackable)
+      row.minus:SetShown(stackable); row.plus:SetShown(stackable)
       if not row.qty:HasFocus() then row.qty:SetText(tostring(cart[id] or 1)) end
       row.max:SetText("/ " .. stock); row.one:SetText("1")
       row:Show()
