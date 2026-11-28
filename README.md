@@ -32,7 +32,7 @@ membres connectés). **Plus il y a de ponts, mieux ça vit** : n'importe quel me
 3. Au premier lancement, une petite fenêtre demande l'adresse du bot (donnée avec la clé, sinon demande-la à
    Bellock) et ta clé. Pour les changer plus tard : raccourci **« Browz Forever - reglages »** sur le bureau (la
    fenêtre revient aussi toute seule si le bot refuse ta clé).
-4. En jeu : `/browz pont on` (une seule fois).
+4. En jeu : rien à faire, le pont s'active tout seul quand le client tourne sur le PC (`/browz pont off` pour le couper).
 
 Les officiers voient les clés et leur dernière utilisation (`/browz cles`) et peuvent en retirer une (`/browz revoquer`).
 

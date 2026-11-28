@@ -515,6 +515,28 @@ function Craft.Reagents(prof, id)
   return list
 end
 
+-- Mes métiers d'artisanat dont les recettes n'ont jamais été lues (fenêtre de métier jamais ouverte avec l'addon)
+function Craft.Unscanned()
+  local out, mine = {}, (crafters()[BF.MyName()] or {}).profs or {}
+  local ch = (BrowzForeverDB.chars or {})[BF.MyName()]
+  for _, p in ipairs(ch and ch.profs or {}) do
+    if p.sl and BF.RecipeData and BF.RecipeData[p.sl] and not mine[p.sl] then out[#out + 1] = PROF_NAMES[p.sl] or p.n end
+  end
+  return out
+end
+local remindFrame = CreateFrame("Frame")
+remindFrame:RegisterEvent("PLAYER_LOGIN")
+remindFrame:SetScript("OnEvent", function()
+  C_Timer.After(30, function()
+    if not BF.active then return end
+    local list = Craft.Unscanned()
+    if #list > 0 then
+      BF.Print(("Ouvre une fois ta fenêtre de %s : tes recettes seront partagées avec la guilde (onglet Craft, Discord)."):format(
+        table.concat(list, ", ")))
+    end
+  end)
+end)
+
 BF.commands["recettes"] = function()
   local c = crafters()[BF.MyName()]
   if not c then BF.Print("Aucune recette enregistrée : ouvre tes métiers une fois."); return end
@@ -689,9 +711,13 @@ local function showDetail()
   for _, b in ipairs(compBtns) do b:Hide() end
   if not r then
     dIcon:Hide(); dTitle:SetText(""); dSub:SetText(""); compLabel:Hide(); dStatus:SetText("")
+    local todo = Craft.Unscanned()
     dText:SetText("|cffaaaaaaChoisis un métier (icônes) puis une catégorie, ou tape le nom d'une recette ou d'un objet.\n\n" ..
       "Par défaut, seules les recettes de plus haut niveau sont affichées : coche « Tous les niveaux » dans une " ..
-      "catégorie pour voir les autres.|r")
+      "catégorie pour voir les autres.|r" ..
+      (#todo > 0 and ("\n\n|cffff9933Ouvre une fois ta fenêtre de %s : tes recettes seront partagées automatiquement.|r")
+        :format(table.concat(todo, ", ")) or "\n\n|cff33ff33Tes recettes sont partagées (mises à jour à chaque ouverture " ..
+        "de ta fenêtre de métier).|r"))
     return
   end
   dIcon:SetRecipe(r.prof, r.id); dIcon:Show()

@@ -19,7 +19,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-CLIENT_VERSION = 15                             # à publier sur GitHub avec l'étiquette « client-v15 »
+CLIENT_VERSION = 16                             # à publier sur GitHub avec l'étiquette « client-v16 »
 UPDATE_URL = "https://api.github.com/repos/GuillaumeClerc/BrowzForever/releases?per_page=20"
 # Clé publique de signature des versions (la clé privée reste chez Bellock, voir signer.py) : une mise à jour n'est
 # installée que si BrowzClient.exe.sig correspond. RSA 3072, PKCS#1 v1.5, SHA-256.
@@ -773,15 +773,24 @@ def write_inbox(wow, inbox, state):
     body = "\n".join(rows) + "\n--\n" + "\n".join(drows) + "\n--\n" + "\n".join(orows)
     text = ("-- Écrit par le client Browz Forever (pont) : demandes, décisions et commandes faites sur Discord. "
             "Ne pas modifier.\n"
-            "BrowzForeverInbox = {\n  t = %d,\n  requests = {\n%s\n  },\n  decisions = {\n%s\n  },\n  orders = {\n%s\n  },\n}\n"
-            % (int(time.time()), "\n".join(rows), "\n".join(drows), "\n".join(orows)))
-    if state.get("inbox_body") == body:
+            "BrowzForeverInbox = {\n  t = %d,\n  client = %d,\n  requests = {\n%s\n  },\n  decisions = {\n%s\n  },\n"
+            "  orders = {\n%s\n  },\n}\n"
+            % (int(time.time()), CLIENT_VERSION, "\n".join(rows), "\n".join(drows), "\n".join(orows)))
+    folder = os.path.join(wow, "Interface", "AddOns", "BrowzForever_Inbox")
+    path = os.path.join(folder, "Inbox.lua")
+    # réécrit si le contenu change, si le fichier a été remplacé (mise à jour de l'addon), et au moins toutes les
+    # 12 h : la date « t » dit à l'addon que le client tourne sur ce PC (pont activé tout seul)
+    try:
+        with open(path, encoding="utf-8") as f:
+            on_disk = f.read()
+    except OSError:
+        on_disk = ""
+    if (state.get("inbox_body") == body and "client = %d" % CLIENT_VERSION in on_disk
+            and time.time() - state.get("inbox_write_t", 0) < 12 * 3600):
         return
     # addon séparé « BrowzForever_Inbox » : une mise à jour de BrowzForever (CurseForge) ne l'efface pas
-    folder = os.path.join(wow, "Interface", "AddOns", "BrowzForever_Inbox")
     if not os.path.isdir(os.path.join(wow, "Interface", "AddOns", "BrowzForever")):
         return
-    path = os.path.join(folder, "Inbox.lua")
     toc = os.path.join(folder, "BrowzForever_Inbox.toc")
     if not os.path.exists(toc):
         os.makedirs(folder, exist_ok=True)
@@ -795,8 +804,10 @@ def write_inbox(wow, inbox, state):
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(text)
     os.replace(tmp, path)
+    changed = state.get("inbox_body") != body
     state["inbox_body"] = body
-    if rows or drows or orows:
+    state["inbox_write_t"] = time.time()
+    if changed and (rows or drows or orows):
         log("%d demande(s), %d décision(s) et %d commande(s) Discord prêtes pour le jeu (lues au prochain /reload)."
             % (len(rows), len(drows), len(orows)))
 

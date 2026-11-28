@@ -108,7 +108,27 @@ BF.OnMessage("P", function(_, sender)
 end)
 
 local function announce() if Bridge.IsOn() then BF.Send("P", "1") end end
+
+-- Pont automatique : le client Browz (v16+) réécrit BrowzForever_Inbox au moins toutes les 12 h avec « client » et
+-- la date. Récent (< 3 jours) = le client tourne sur ce PC → pont activé tout seul (sauf « /browz pont off »).
+-- Plus rien depuis 7 jours alors que c'est l'automatique qui l'avait activé → pont coupé.
+local function autoBridge()
+  local inbox = _G.BrowzForeverInbox
+  local age = inbox and inbox.client and inbox.t and inbox.t > 0 and (GetServerTime() - inbox.t) or nil
+  if age and age < 3 * 86400 then
+    if not Bridge.IsOn() and db().bridgeAuto ~= false then
+      db().bridge, db().bridgeByAuto = true, true
+      if LoggingChat then pcall(LoggingChat, true) end
+      BF.Print("Client Browz détecté sur ce PC : |cff00ff00pont activé automatiquement|r (« /browz pont off » pour le couper).")
+    end
+  elseif db().bridgeByAuto and Bridge.IsOn() and (not age or age > 7 * 86400) then
+    db().bridge, db().bridgeByAuto = false, nil
+    BF.Print("Le client Browz ne tourne plus sur ce PC depuis une semaine : pont désactivé.")
+  end
+end
+
 BF.OnActive(function()
+  pcall(autoBridge)
   C_Timer.After(1, announce)   -- « un pont arrive » : les autres renvoient ce qui ne lui est pas parvenu
   if Bridge.IsOn() and LoggingChat and not LoggingChat() then pcall(LoggingChat, true) end
 end)
@@ -116,12 +136,12 @@ end)
 BF.commands["pont"] = function(arg)
   arg = (arg or ""):lower()
   if arg == "on" then
-    db().bridge = true
+    db().bridge, db().bridgeAuto, db().bridgeByAuto = true, nil, nil
     if LoggingChat then pcall(LoggingChat, true) end
     BF.Print("Pont |cff00ff00activé|r : ce PC transmet les passages au coffre à Discord (journal de chat activé).")
     announce()
   elseif arg == "off" then
-    db().bridge = false
+    db().bridge, db().bridgeAuto, db().bridgeByAuto = false, false, nil   -- l'automatique ne le rallume plus
     BF.Print("Pont |cffff4444désactivé|r.")
   else
     local pending = 0

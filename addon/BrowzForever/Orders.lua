@@ -229,8 +229,15 @@ function Ord.Take(o, fee)
   local _, kind = Craft.CanCraft(me(), o.prof, o.recipe)
   local note = (kind == "patron" and "L'artisan doit d'abord obtenir le patron (à farmer ensemble, à acheter à l'HV, ou payé par la commission)")
     or (kind == "apprendre" and "L'artisan doit d'abord apprendre la recette chez un maître") or false
-  if fee > 0 then update(o, "proposee", { crafter = me(), fee = fee, note = note })
-  else update(o, "prise", { crafter = me(), fee = 0, note = note }) end
+  if fee > 0 then
+    update(o, "proposee", { crafter = me(), fee = fee, note = note })
+    BF.Print(("Offre envoyée à %s : « %s » contre %s. |cffffd100En attente de sa réponse|r (en jeu ou sur Discord) : "
+      .. "tu seras prévenu quand il accepte."):format(short(o.who), Ord.Name(o), money(fee)))
+  else
+    update(o, "prise", { crafter = me(), fee = 0, note = note })
+    BF.Print(("Tu prends « %s » pour %s, sans commission. Clique « Craft fait » une fois l'objet fabriqué.")
+      :format(Ord.Name(o), short(o.who)))
+  end
 end
 function Ord.AcceptFee(o) update(o, "prise") end
 function Ord.RefuseFee(o) update(o, "ouverte", { crafter = false, fee = 0, note = false }) end
@@ -468,8 +475,10 @@ for i = 1, ROWS do
   r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(22, 22); r.icon:SetPoint("LEFT", 2, 0)
   r.top = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
   r.top:SetPoint("TOPLEFT", r.icon, "TOPRIGHT", 6, 1); r.top:SetPoint("RIGHT", -4, 0); r.top:SetJustifyH("LEFT")
+  r.top:SetWordWrap(false); r.top:SetMaxLines(1)
   r.bot = r:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
   r.bot:SetPoint("BOTTOMLEFT", r.icon, "BOTTOMRIGHT", 6, -1); r.bot:SetPoint("RIGHT", -4, 0); r.bot:SetJustifyH("LEFT")
+  r.bot:SetWordWrap(false); r.bot:SetMaxLines(1)
   r:Hide()
   rows[i] = r
 end
@@ -586,7 +595,7 @@ local function refresh()
       local item = Craft.CraftedItem(o.prof, o.recipe)
       row.icon:SetTexture((item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(item)) or 134400)
       row.top:SetText(Ord.Name(o))
-      row.bot:SetText(("%s · %s%s"):format(short(o.who), Ord.StatusText(o), o.crafter and (" · " .. short(o.crafter)) or ""))
+      row.bot:SetText(("%s · %s%s"):format(Ord.StatusText(o), short(o.who), o.crafter and (" → " .. short(o.crafter)) or ""))
       row.sel:SetShown(selected == o.id)
       row:Show()
     else row:Hide() end
