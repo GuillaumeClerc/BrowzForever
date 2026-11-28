@@ -225,7 +225,7 @@ BF.commands["craft"] = function() BF.OpenMain("craft") end
 BF.commands["liaison"] = function() BF.OpenMain("liaison") end
 BF.commands["aide"] = function()
   BF.Print("|cffffd100/browz|r : ouvrir/fermer la fenêtre · |cffffd100/browz bdg|r · |cffffd100/browz liaison|r · " ..
-    "|cffffd100/browz lien|r (lien du client pont) · |cffffd100/browz pont on|off|r (ce PC envoie à Discord)")
+    "|cffffd100/browz lien|r (lien du client pont) · |cffffd100/browz macro|r · |cffffd100/browz pont on|off|r (ce PC envoie à Discord)")
 end
 
 -- Lien du client pont (à copier avec Ctrl+C) -------------------------------------------------
@@ -244,6 +244,38 @@ StaticPopupDialogs["BROWZFOREVER_LIEN"] = {
 }
 function BF.ShowLink() StaticPopup_Show("BROWZFOREVER_LIEN") end
 BF.commands["lien"] = BF.ShowLink
+
+-- Macro « Browz BDG » (icône de la banque mobile) : créée une seule fois dans les macros générales du compte.
+-- Si le joueur la supprime, on ne la recrée pas toute seule : /browz macro la remet.
+local MACRO_NAME, MACRO_ICON = "Browz BDG", "Achievement_GuildPerk_MobileBanking"
+function BF.EnsureMacro(force)
+  if InCombatLockdown() then return false end
+  if GetMacroIndexByName(MACRO_NAME) > 0 then
+    if force then BF.Print("La macro « " .. MACRO_NAME .. " » existe déjà (Échap → Macros, onglet Général).") end
+    return true
+  end
+  if BrowzForeverDB.ui.macroDone and not force then return false end
+  local nGlobal = GetNumMacros()
+  if nGlobal >= (MAX_ACCOUNT_MACROS or 120) then
+    if force then BF.Print("|cffff5555Plus de place pour une macro générale.|r") end
+    return false
+  end
+  local ok = pcall(CreateMacro, MACRO_NAME, MACRO_ICON, "/browz bdg", nil)
+  if ok and GetMacroIndexByName(MACRO_NAME) > 0 then
+    BrowzForeverDB.ui.macroDone = true
+    BF.Print("Macro « " .. MACRO_NAME .. " » ajoutée (Échap → Macros, onglet Général) : glisse-la dans une barre d'action.")
+    return true
+  end
+  return false
+end
+BF.commands["macro"] = function() BF.EnsureMacro(true) end
+
+local macroEvents = CreateFrame("Frame")
+macroEvents:RegisterEvent("PLAYER_LOGIN")
+macroEvents:SetScript("OnEvent", function()
+  -- après la lecture de la guilde (BF.active), et hors combat
+  C_Timer.After(8, function() if BF.active then BF.EnsureMacro(false) end end)
+end)
 
 local linkBtn = CreateFrame("Button", nil, liaison, "UIPanelButtonTemplate")
 linkBtn:SetSize(150, 22); linkBtn:SetPoint("BOTTOMRIGHT", -16, 14)
