@@ -731,10 +731,12 @@ def write_inbox(wow, inbox, state):
     drows = ["    { id = %s, status = %s, by = %s, at = %d },"
              % (lua_str(d["id"]), lua_str(d.get("status", "")), lua_str(d.get("by") or ""), int(d.get("at") or 0))
              for d in decisions if d.get("id")]
-    body = "\n".join(rows) + "\n--\n" + "\n".join(drows)
-    text = ("-- Écrit par le client Browz Forever (pont) : demandes et décisions faites sur Discord. Ne pas modifier.\n"
-            "BrowzForeverInbox = {\n  t = %d,\n  requests = {\n%s\n  },\n  decisions = {\n%s\n  },\n}\n"
-            % (int(time.time()), "\n".join(rows), "\n".join(drows)))
+    orows = ["    %s," % lua_str(o) for o in (inbox.get("orders") or []) if isinstance(o, str)]
+    body = "\n".join(rows) + "\n--\n" + "\n".join(drows) + "\n--\n" + "\n".join(orows)
+    text = ("-- Écrit par le client Browz Forever (pont) : demandes, décisions et commandes faites sur Discord. "
+            "Ne pas modifier.\n"
+            "BrowzForeverInbox = {\n  t = %d,\n  requests = {\n%s\n  },\n  decisions = {\n%s\n  },\n  orders = {\n%s\n  },\n}\n"
+            % (int(time.time()), "\n".join(rows), "\n".join(drows), "\n".join(orows)))
     if state.get("inbox_body") == body:
         return
     path = os.path.join(wow, "Interface", "AddOns", "BrowzForever", "Inbox.lua")
@@ -745,8 +747,9 @@ def write_inbox(wow, inbox, state):
         f.write(text)
     os.replace(tmp, path)
     state["inbox_body"] = body
-    if rows or drows:
-        log("%d demande(s) et %d décision(s) Discord prêtes pour le jeu (lues au prochain /reload)." % (len(rows), len(drows)))
+    if rows or drows or orows:
+        log("%d demande(s), %d décision(s) et %d commande(s) Discord prêtes pour le jeu (lues au prochain /reload)."
+            % (len(rows), len(drows), len(orows)))
 
 
 def fetch_inbox(cfg):

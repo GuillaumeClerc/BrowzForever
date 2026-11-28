@@ -19,6 +19,7 @@ local DAY = 86400
 local STATUS = {
   ouverte   = { "Ouverte", "|cffffd100" },
   proposee  = { "Commission proposée", "|cffff9933" },
+  validation = { "À valider par un officier", "|cffff9933" },   -- prise sur Discord par un artisan sans l'addon
   prise     = { "Prise en charge", "|cff66ccff" },
   fabriquee = { "Fabriquée", "|cff66ccff" },
   payee     = { "Payée, à livrer", "|cff66ccff" },
@@ -155,9 +156,30 @@ local function resendOpen()
   end
 end
 BF.OnMessage("P", function() C_Timer.After(4 + math.random() * 8, resendOpen) end)
+-- Commandes faites ou modifiées sur Discord (boîte de réception écrite par le client du pont, lue au chargement)
+local function loadInbox()
+  local n = 0
+  for _, data in ipairs((_G.BrowzForeverInbox or {}).orders or {}) do
+    local o = type(data) == "string" and Ord.Parse(data)
+    if o then
+      local old = db()[o.id]
+      old = old and { status = old.status } or nil
+      if store(o) then
+        BF.Send("O", data)                 -- les autres membres la reçoivent aussi
+        notify(o, old)
+        n = n + 1
+      end
+    end
+  end
+  if n > 0 then BF.Print(("%d commande(s) de craft reprise(s) de Discord."):format(n)); changed() end
+end
+
 local lf = CreateFrame("Frame")
 lf:RegisterEvent("PLAYER_LOGIN")
-lf:SetScript("OnEvent", function() C_Timer.After(35, function() if BF.active then resendOpen() end end) end)
+lf:SetScript("OnEvent", function()
+  C_Timer.After(12, function() if BF.active then loadInbox() end end)
+  C_Timer.After(35, function() if BF.active then resendOpen() end end)
+end)
 
 -- Actions ----------------------------------------------------------------------------------------
 function Ord.Create(prof, recipe, qty, why)
@@ -438,7 +460,10 @@ local function showDetail()
   elseif s == "ouverte" and Craft.CanCraft(me(), o.prof, o.recipe) then
     setButton(b1, "Je m'en charge", function() StaticPopup_Show("BROWZFOREVER_COMMISSION", Ord.Name(o), nil, o) end)
   end
-  if BF.IsOfficer() and not mine and not crafting and not FINAL[s] then
+  if BF.IsOfficer() and s == "validation" then
+    setButton(b1, "Valider", function() update(o, (o.fee or 0) > 0 and "proposee" or "prise") end)
+    setButton(b2, "Refuser", function() update(o, "ouverte", { crafter = false, fee = 0, note = false }) end)
+  elseif BF.IsOfficer() and not mine and not crafting and not FINAL[s] then
     setButton(b2, "Annuler (officier)", function() Ord.Cancel(o) end)
   end
 end
