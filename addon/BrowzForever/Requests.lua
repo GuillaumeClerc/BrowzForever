@@ -212,7 +212,7 @@ function Req.WithdrawLog() return withdrawLog end
 -- Toujours en posant la pile dans une case VIDE des sacs (comme un glisser-déposer) : sur Forever, le clic droit
 -- (rangement auto) échoue pour les piles venant d'autres royaumes (« impossible de combiner… »).
 -- attempt 1 : quantités exactes (une pile coupée si besoin) ; attempt 2 : seulement des piles entières (sur Forever,
--- couper une pile venue d'un autre royaume peut être refusé) quitte à prendre un peu plus que demandé.
+-- couper une pile venue d'un autre royaume peut être refusé) ; le surplus est recoupé dans les sacs et reposé au coffre.
 function Req.Withdraw(attempt)
   attempt = attempt or 1
   if not BF.Bank.IsReady() then return end
@@ -253,14 +253,16 @@ function Req.Withdraw(attempt)
         for k, st in ipairs(stacks) do if st.count >= left then pick = k break end end
         pick = pick or #stacks
         local st = table.remove(stacks, pick)
-        plan[#plan + 1] = { st, st.count }
+        -- surplus : ce qu'on prend en trop avec cette pile, remis dans le coffre juste après
+        plan[#plan + 1] = { st, st.count, math.max(0, st.count - left) }
         left = left - st.count
       end
     end
     for _, p in ipairs(plan) do
-      local st, take = p[1], p[2]
+      local st, take, extra = p[1], p[2], p[3] or 0
+      local spot
       push(function()
-        local spot = table.remove(free, 1)
+        spot = table.remove(free, 1)
         if not spot then error("plus de place dans les sacs") end
         if SetCurrentGuildBankTab then SetCurrentGuildBankTab(st.tab) end
         ClearCursor()
@@ -268,6 +270,19 @@ function Req.Withdraw(attempt)
         C_Container.PickupContainerItem(spot[1], spot[2])
       end)
       push(function() end)   -- le coffre refuse les actions trop rapprochées : une pause entre deux piles
+      if extra > 0 then
+        -- la pile entière est dans le sac : on coupe le surplus (dans les sacs, ça passe) et on le repose
+        -- dans la case du coffre qu'elle vient de libérer
+        push(function()
+          if not spot then return end
+          if SetCurrentGuildBankTab then SetCurrentGuildBankTab(st.tab) end
+          ClearCursor()
+          C_Container.SplitContainerItem(spot[1], spot[2], extra)
+          if CursorHasItem() then PickupGuildBankItem(st.tab, st.slot) end
+          ClearCursor()
+        end)
+        push(function() end)
+      end
     end
     if left > 0 and attempt == 1 then BF.Print(("|cffff5555Il manque %d × %s dans la banque.|r"):format(left, itemName(id))) end
   end
@@ -624,31 +639,23 @@ cw:SetScript("OnShow", Req.RefreshCart)
 -- selon les versions du jeu : on essaie les unes après les autres)
 function BF.InsertChatLink(link)
   local CFU = _G.ChatFrameUtil
-  local getActive = (CFU and CFU.GetActiveWindow) or _G.ChatEdit_GetActiveWindow
-  local box = getActive and getActive()
-  if box and box:IsShown() then box:Insert(link); return end
-  -- on garde le dernier canal utilisé (guilde, groupe, chuchotement…) : l'ouverture du chat peut le remettre sur « Dire »
-  local frame = _G.SELECTED_CHAT_FRAME or _G.DEFAULT_CHAT_FRAME
-  local eb = frame and (frame.editBox or _G[frame:GetName() .. "EditBox"])
-  local last = eb and { eb:GetAttribute("chatType"), eb:GetAttribute("tellTarget"), eb:GetAttribute("channelTarget") }
+  -- même chemin que Maj+clic : marche directement si la zone de saisie est déjà ouverte
+  local insert = (CFU and CFU.InsertLink) or _G.ChatEdit_InsertLink
+  local function tryInsert() local ok, done = pcall(insert, link); return ok and done end
+  if insert and tryInsert() then return end
+  -- sinon on ouvre le chat comme avec Entrée (il reprend le dernier canal utilisé : guilde, groupe, chuchotement…)
   local open = (CFU and CFU.OpenChat) or _G.ChatFrame_OpenChat
-  local opened = open and pcall(open, "")
-  box = getActive and getActive()
-  if not (opened and box and box:IsShown()) then
-    box = eb
-    if not box then
-      BF.Print("Impossible d'ouvrir le chat : appuie sur Entrée puis Maj+clic sur l'objet.")
-      return
-    end
-    box:Show(); box:SetFocus()
+  if open then pcall(open, "") end
+  if insert and tryInsert() then return end
+  -- dernier recours : la zone de saisie de la fenêtre de chat principale
+  local frame = _G.SELECTED_CHAT_FRAME or _G.DEFAULT_CHAT_FRAME
+  local box = frame and (frame.editBox or _G[frame:GetName() .. "EditBox"])
+  if not box then
+    BF.Print("Impossible d'ouvrir le chat : appuie sur Entrée puis Maj+clic sur l'objet.")
+    return
   end
-  if last and last[1] then
-    box:SetAttribute("chatType", last[1])
-    if last[2] then box:SetAttribute("tellTarget", last[2]) end
-    if last[3] then box:SetAttribute("channelTarget", last[3]) end
-    local update = (CFU and CFU.UpdateHeader) or _G.ChatEdit_UpdateHeader
-    if update then pcall(update, box) end
-  end
+  if not box:IsShown() then box:Show() end
+  box:SetFocus()
   box:Insert(link)
 end
 
