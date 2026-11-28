@@ -225,7 +225,7 @@ BF.commands["craft"] = function() BF.OpenMain("craft") end
 BF.commands["liaison"] = function() BF.OpenMain("liaison") end
 BF.commands["aide"] = function()
   BF.Print("|cffffd100/browz|r : ouvrir/fermer la fenêtre · |cffffd100/browz bdg|r · |cffffd100/browz liaison|r · " ..
-    "|cffffd100/browz lien|r (lien du client pont) · |cffffd100/browz macro|r · |cffffd100/browz pont on|off|r (ce PC envoie à Discord)")
+    "|cffffd100/browz lien|r (lien du client pont) · |cffffd100/browz macro|r · |cffffd100/browz ranger|r (coffre ouvert) · |cffffd100/browz pont on|off|r (ce PC envoie à Discord)")
 end
 
 -- Lien du client pont (à copier avec Ctrl+C) -------------------------------------------------
