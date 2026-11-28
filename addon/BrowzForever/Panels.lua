@@ -31,13 +31,9 @@ end
 local demandes = newPanel()
 BF.DemandesPanel = demandes
 
--- Craft (à venir)
+-- Craft : rempli par Crafts.lua
 local craft = newPanel()
-heading(craft, "Demandes de craft", 20, -36)
-paragraph(craft, "Bientôt ici :\n\n" ..
-  "• La liste des artisans de la guilde et de leurs recettes (partagées par l'addon quand chacun ouvre ses métiers).\n" ..
-  "• Rechercher qui sait fabriquer un objet.\n" ..
-  "• Envoyer une demande de craft, visible aussi sur Discord (salon #commandes-métiers).", 20, -66)
+BF.CraftPanel = craft
 
 -- Liaison ---------------------------------------------------------------------------------
 local liaison = newPanel()

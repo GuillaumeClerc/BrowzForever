@@ -1,199 +1,470 @@
--- Browz Forever : recettes et commandes de craft (en construction)
--- Étape 0 : /browz testmetier — relève ce que le jeu Forever donne sur la fenêtre de métier ouverte
--- (API moderne C_TradeSkillUI ou ancienne API GetTradeSkillInfo) et l'enregistre dans BrowzForeverDB.probe,
--- pour choisir la bonne façon de lire les recettes. Résultat lisible après /reload.
+-- Browz Forever : artisans et recettes de la guilde (onglet Craft)
+-- Données des recettes (noms, niveau requis, composants, objet créé, maître ou non) : bibliothèque LibProfessionDB
+-- (addon « ProfessionDB », licence MIT, Pimptasty) — rien à scanner. L'addon ne lit que les recettes APPRISES
+-- du personnage quand il ouvre un métier, et les partage à la guilde (message W).
+-- Artisans connus :
+--   « addon »   : recettes réellement apprises (lues dans la fenêtre de métier) ;
+--   « supposé » : métier connu avec son niveau (fiche Browz) mais recettes jamais lues → on suppose toutes les recettes
+--                 de maître (et apprises d'office) jusqu'à ce niveau ;
+--   « métier »  : métier vu dans la liste des artisans de la guilde du jeu (membres sans addon, niveau inconnu).
 local _, BF = ...
+local Craft = {}
+BF.Craft = Craft
 
-local function keys(t)
-  local out = {}
-  if type(t) ~= "table" then return tostring(t) end
-  for k, v in pairs(t) do
-    local tv = type(v)
-    if tv == "table" then
-      local n = 0
-      for _ in pairs(v) do n = n + 1 end
-      out[#out + 1] = k .. "=table(" .. n .. ")"
-    else
-      out[#out + 1] = k .. "=" .. tostring(v)
+local PROF_NAMES = {
+  [171] = "Alchimie", [164] = "Forge", [185] = "Cuisine", [333] = "Enchantement", [202] = "Ingénierie",
+  [129] = "Secourisme", [165] = "Travail du cuir", [197] = "Couture", [186] = "Minage", [356] = "Pêche",
+  [182] = "Herboristerie", [393] = "Dépeçage",
+}
+Craft.PROF_NAMES = PROF_NAMES
+
+function Craft.Lib()
+  local L = LibStub and LibStub("LibProfessionDB-1.0", true)
+  if L and L.IsGameVersion and L:IsGameVersion("Forever") and L:IsReady() then return L end
+end
+
+local function crafters()
+  BrowzForeverDB.crafters = BrowzForeverDB.crafters or {}
+  return BrowzForeverDB.crafters
+end
+local function guildProfs()
+  BrowzForeverDB.guildProfs = BrowzForeverDB.guildProfs or {}
+  return BrowzForeverDB.guildProfs
+end
+
+local listeners = {}
+function Craft.OnChange(fn) listeners[#listeners + 1] = fn end
+local function changed() for _, fn in ipairs(listeners) do pcall(fn) end end
+
+-- Ensembles de recettes apprises (cache) ----------------------------------------------------------
+local setCache = {}
+local function learnedSet(name, prof)
+  local c = crafters()[name]
+  local p = c and c.profs and c.profs[prof]
+  if not p then return nil end
+  local key = name .. "|" .. prof .. "|" .. (p.t or 0)
+  local s = setCache[key]
+  if not s then
+    s = {}
+    for id in (p.ids or ""):gmatch("%d+") do s[tonumber(id)] = true end
+    setCache[key] = s
+  end
+  return s, p
+end
+
+-- Lecture de MES recettes quand une fenêtre de métier est ouverte -----------------------------------
+local function serialize(name, prof, p)
+  return table.concat({ "1", name, prof, p.s or 0, p.t or 0, p.ids or "" }, "^")
+end
+
+local function publish(prof)
+  local me = BF.MyName()
+  local c = crafters()[me]
+  local p = c and c.profs[prof]
+  if p then BF.Send("W", serialize(me, prof, p)) end
+end
+
+local function scanOpen()
+  local T = C_TradeSkillUI
+  if not (T and T.IsTradeSkillReady and T.IsTradeSkillReady()) then return end
+  if (T.IsTradeSkillLinked and T.IsTradeSkillLinked()) or (T.IsTradeSkillGuild and T.IsTradeSkillGuild())
+    or (T.IsNPCCrafting and T.IsNPCCrafting()) then return end              -- métier d'un autre joueur : on ne lit pas
+  local okB, base = pcall(T.GetBaseProfessionInfo)
+  local prof = okB and base and base.professionID
+  if not prof or prof == 0 then return end
+  local learned = {}
+  for _, id in ipairs(T.GetAllRecipeIDs() or {}) do
+    local info = T.GetRecipeInfo(id)
+    if info and info.learned then learned[#learned + 1] = id end
+  end
+  if #learned == 0 then return end
+  table.sort(learned)
+  local ids = table.concat(learned, ";")
+  local me = BF.MyName()
+  local c = crafters()[me] or { profs = {} }
+  local old = c.profs[prof]
+  if old and old.ids == ids and old.s == base.skillLevel then return end
+  c.profs[prof] = { s = base.skillLevel, ids = ids, t = GetServerTime() }
+  c.t = GetServerTime()
+  crafters()[me] = c
+  publish(prof)
+  BF.Debug(("Recettes de %s enregistrées : %d"):format(PROF_NAMES[prof] or prof, #learned))
+  changed()
+end
+
+local pending
+local scanFrame = CreateFrame("Frame")
+scanFrame:RegisterEvent("TRADE_SKILL_LIST_UPDATE")
+scanFrame:RegisterEvent("TRADE_SKILL_SHOW")
+scanFrame:RegisterEvent("NEW_RECIPE_LEARNED")
+scanFrame:SetScript("OnEvent", function()
+  if pending or not BF.active then return end
+  pending = true
+  C_Timer.After(1.5, function() pending = false; pcall(scanOpen) end)
+end)
+
+-- Réception des recettes des autres ---------------------------------------------------------------
+BF.OnMessage("W", function(data)
+  local v, name, prof, s, t, ids = strsplit("^", data)
+  if v ~= "1" or not name then return end
+  prof, s, t = tonumber(prof), tonumber(s), tonumber(t)
+  if not prof then return end
+  local c = crafters()[name] or { profs = {} }
+  local old = c.profs[prof]
+  if old and (old.t or 0) >= (t or 0) then return end
+  c.profs[prof] = { s = s, ids = ids or "", t = t }
+  c.t = math.max(c.t or 0, t or 0)
+  crafters()[name] = c
+  changed()
+end)
+
+-- À la connexion : on renvoie nos recettes connues (et quand un pont arrive)
+local function resendMine()
+  local c = crafters()[BF.MyName()]
+  if not c then return end
+  for prof in pairs(c.profs) do publish(prof) end
+end
+BF.OnMessage("P", function() C_Timer.After(5 + math.random() * 10, resendMine) end)
+
+-- Liste des artisans du jeu (membres sans addon : connectés seulement, sans niveau) ------------------
+local function scanGuildProfs()
+  if not (GetNumGuildTradeSkill and GetGuildTradeSkillInfo) then return end
+  if ExpandGuildTradeSkillHeader then
+    for i = 1, GetNumGuildTradeSkill() do
+      local skillID, isCollapsed = GetGuildTradeSkillInfo(i)
+      if skillID and isCollapsed then pcall(ExpandGuildTradeSkillHeader, skillID) end
     end
   end
-  table.sort(out)
-  return table.concat(out, " | ")
-end
-
-local function has(name)
-  local t = _G
-  for part in name:gmatch("[^%.]+") do
-    t = type(t) == "table" and t[part] or nil
+  local g, now, found = guildProfs(), GetServerTime(), false
+  for i = 1, GetNumGuildTradeSkill() do
+    local skillID, _, _, header, _, _, _, playerName, fullName = GetGuildTradeSkillInfo(i)
+    local who = fullName or playerName
+    if skillID and not header and who then
+      g[who] = g[who] or {}
+      if not g[who][skillID] then found = true end
+      g[who][skillID] = now
+    end
   end
-  return type(t) == "function"
+  if found then changed() end
+end
+local gpFrame = CreateFrame("Frame")
+gpFrame:RegisterEvent("PLAYER_LOGIN")
+gpFrame:RegisterEvent("GUILD_TRADESKILL_UPDATE")
+local gpBusy
+gpFrame:SetScript("OnEvent", function(_, e)
+  if e == "PLAYER_LOGIN" then
+    C_Timer.After(25, function()
+      if not BF.active then return end
+      pcall(scanGuildProfs)
+      resendMine()
+    end)
+    return
+  end
+  if gpBusy or not BF.active then return end
+  gpBusy = true
+  C_Timer.After(5, function() gpBusy = false; pcall(scanGuildProfs) end)
+end)
+
+-- Niveaux de métier connus par les fiches Browz (membres qui ont l'addon) ---------------------------
+local levelsCache, levelsAt = nil, 0
+local function cardLevels()
+  if levelsCache and GetTime() - levelsAt < 10 then return levelsCache end
+  local out = {}
+  for name, c in pairs(BrowzForeverDB.cards or {}) do
+    local ok, card = pcall(BF.Profile.Parse, c.data)
+    if ok and card then
+      for _, p in ipairs(card.profs or {}) do
+        if p.sl and p.lvl then out[name] = out[name] or {}; out[name][p.sl] = p.lvl end
+      end
+    end
+  end
+  for name, ch in pairs(BrowzForeverDB.chars or {}) do   -- mes personnages
+    for _, p in ipairs(ch.profs or {}) do
+      if p.sl and p.lvl then out[name] = out[name] or {}; out[name][p.sl] = p.lvl end
+    end
+  end
+  levelsCache, levelsAt = out, GetTime()
+  return out
 end
 
-BF.commands["testmetier"] = function()
-  local p = { t = GetServerTime(), api = {}, recipes = {}, notes = {} }
-  for _, f in ipairs({
-    "C_TradeSkillUI.GetAllRecipeIDs", "C_TradeSkillUI.GetRecipeInfo", "C_TradeSkillUI.GetRecipeSchematic",
-    "C_TradeSkillUI.GetBaseProfessionInfo", "C_TradeSkillUI.GetChildProfessionInfo", "C_TradeSkillUI.GetProfessionInfoBySkillLineID",
-    "C_TradeSkillUI.IsTradeSkillReady", "C_TradeSkillUI.GetTradeSkillLine", "C_TradeSkillUI.GetRecipeItemLink",
-    "C_TradeSkillUI.GetRecipeOutputItemData", "C_TradeSkillUI.GetRecipeRequirements",
-    "GetNumTradeSkills", "GetTradeSkillInfo", "GetTradeSkillLine", "GetTradeSkillReagentInfo", "GetTradeSkillNumReagents",
-    "GetTradeSkillItemLink", "GetTradeSkillRecipeLink", "GetCraftInfo", "GetNumCrafts",
-    "GetGuildTradeSkillInfo", "GetNumGuildTradeSkill", "QueryGuildMembersForRecipe", "C_GuildInfo.QueryGuildMembersForRecipe",
-  }) do p.api[f] = has(f) end
+-- Recette « de base » : apprise d'office ou chez un maître
+local function isBasic(L, id)
+  if L.IsAutoTaughtRecipe and L:IsAutoTaughtRecipe(id) then return true end
+  if L.GetRecipeSourceKinds then
+    local ok, kinds = pcall(L.GetRecipeSourceKinds, L, id)
+    if ok and type(kinds) == "table" and kinds.trainer then return true end
+  end
+  return false
+end
 
-  -- API moderne
-  if has("C_TradeSkillUI.GetAllRecipeIDs") then
-    local ok, ids = pcall(C_TradeSkillUI.GetAllRecipeIDs)
-    if ok and type(ids) == "table" then
-      p.notes[#p.notes + 1] = "GetAllRecipeIDs : " .. #ids .. " recettes"
-      if has("C_TradeSkillUI.GetBaseProfessionInfo") then
-        local ok2, base = pcall(C_TradeSkillUI.GetBaseProfessionInfo)
-        if ok2 then p.notes[#p.notes + 1] = "base : " .. keys(base) end
+-- Qui peut fabriquer une recette : liste triée (addon d'abord, puis supposés, puis « métier seulement »)
+function Craft.CraftersFor(prof, id)
+  local L = Craft.Lib()
+  local out, seen = {}, {}
+  for name in pairs(crafters()) do
+    local set, p = learnedSet(name, prof)
+    if set and set[id] then
+      out[#out + 1] = { name = name, s = p.s, kind = "addon" }; seen[name] = true
+    end
+  end
+  if L and isBasic(L, id) then
+    local need = L:GetRequiredSkill(prof, id) or 0
+    for name, levels in pairs(cardLevels()) do
+      local lvl = levels[prof]
+      if lvl and not seen[name] and not (crafters()[name] and crafters()[name].profs[prof]) and lvl >= need then
+        out[#out + 1] = { name = name, s = lvl, kind = "suppose" }; seen[name] = true
       end
-      if has("C_TradeSkillUI.GetChildProfessionInfo") then
-        local ok2, child = pcall(C_TradeSkillUI.GetChildProfessionInfo)
-        if ok2 then p.notes[#p.notes + 1] = "child : " .. keys(child) end
+    end
+    for name, profs in pairs(guildProfs()) do
+      if profs[prof] and not seen[name] and not (crafters()[name] and crafters()[name].profs[prof])
+        and not (cardLevels()[name] and cardLevels()[name][prof]) then
+        out[#out + 1] = { name = name, kind = "metier" }; seen[name] = true
       end
-      for i = 1, math.min(#ids, 6) do
-        local id = ids[i]
-        local r = { id = id }
-        local okI, info = pcall(C_TradeSkillUI.GetRecipeInfo, id)
-        if okI then r.info = keys(info) end
-        if has("C_TradeSkillUI.GetRecipeSchematic") then
-          local okS, sch = pcall(C_TradeSkillUI.GetRecipeSchematic, id, false)
-          if okS and type(sch) == "table" then
-            r.schematic = keys(sch)
-            local reag = {}
-            for _, slot in ipairs(sch.reagentSlotSchematics or {}) do
-              local first = slot.reagents and slot.reagents[1]
-              reag[#reag + 1] = (first and first.itemID or "?") .. "x" .. tostring(slot.quantityRequired)
-            end
-            r.reagents = table.concat(reag, ",")
+    end
+  end
+  local rank = { addon = 1, suppose = 2, metier = 3 }
+  table.sort(out, function(a, b)
+    if rank[a.kind] ~= rank[b.kind] then return rank[a.kind] < rank[b.kind] end
+    if (a.s or 0) ~= (b.s or 0) then return (a.s or 0) > (b.s or 0) end
+    return a.name < b.name
+  end)
+  return out
+end
+
+-- Métiers présents dans la guilde (au moins un artisan connu)
+function Craft.GuildProfessions()
+  local profs = {}
+  for _, c in pairs(crafters()) do for prof in pairs(c.profs or {}) do profs[prof] = true end end
+  for _, levels in pairs(cardLevels()) do for prof in pairs(levels) do profs[prof] = true end end
+  for _, g in pairs(guildProfs()) do for prof in pairs(g) do profs[prof] = true end end
+  return profs
+end
+
+-- Recherche : recettes que quelqu'un de la guilde peut fabriquer.
+-- Sans texte : seulement les recettes de plus haut niveau (pour ne pas être inondé).
+-- Avec texte : toutes les recettes dont le nom contient le texte, niveau décroissant.
+local ACCENTS = { ["é"] = "e", ["è"] = "e", ["ê"] = "e", ["ë"] = "e", ["à"] = "a", ["â"] = "a", ["î"] = "i",
+                  ["ï"] = "i", ["ô"] = "o", ["û"] = "u", ["ù"] = "u", ["ç"] = "c", ["’"] = "'" }
+local function norm(s)
+  s = (s or ""):lower()
+  for a, b in pairs(ACCENTS) do s = s:gsub(a, b) end
+  return s
+end
+
+function Craft.Search(text, limit)
+  local L = Craft.Lib()
+  if not L then return {} end
+  limit = limit or 300
+  local q = norm(strtrim(text or ""))
+  local out = {}
+  for prof in pairs(Craft.GuildProfessions()) do
+    if L:HasProfession(prof) then
+      for id in pairs(L:GetRecipes(prof) or {}) do
+        local name = L:GetName(prof, id)
+        if name and (q == "" or norm(name):find(q, 1, true)) then
+          local who = Craft.CraftersFor(prof, id)
+          if #who > 0 then
+            out[#out + 1] = { prof = prof, id = id, name = name, need = L:GetRequiredSkill(prof, id) or 0, who = who }
           end
         end
-        if has("C_TradeSkillUI.GetRecipeRequirements") then
-          local okR, req = pcall(C_TradeSkillUI.GetRecipeRequirements, id)
-          if okR then r.requirements = keys(req) end
-        end
-        p.recipes[#p.recipes + 1] = r
-      end
-    else
-      p.notes[#p.notes + 1] = "GetAllRecipeIDs : erreur ou vide (" .. tostring(ids) .. ")"
-    end
-  end
-
-  -- ancienne API
-  if has("GetNumTradeSkills") then
-    local n = GetNumTradeSkills() or 0
-    p.notes[#p.notes + 1] = "GetNumTradeSkills : " .. n
-    if has("GetTradeSkillLine") then p.notes[#p.notes + 1] = "GetTradeSkillLine : " .. table.concat({ tostringall(GetTradeSkillLine()) }, ", ") end
-    for i = 1, math.min(n, 6) do
-      local r = { old = i, info = table.concat({ tostringall(GetTradeSkillInfo(i)) }, ", ") }
-      if has("GetTradeSkillItemLink") then r.link = tostring(GetTradeSkillItemLink(i)) end
-      if has("GetTradeSkillRecipeLink") then r.recipeLink = tostring(GetTradeSkillRecipeLink(i)) end
-      if has("GetTradeSkillNumReagents") then
-        local reag = {}
-        for k = 1, (GetTradeSkillNumReagents(i) or 0) do
-          reag[#reag + 1] = table.concat({ tostringall(GetTradeSkillReagentInfo(i, k)) }, "/")
-        end
-        r.reagents = table.concat(reag, " ; ")
-      end
-      p.recipes[#p.recipes + 1] = r
-    end
-  end
-
-  -- métiers de guilde (liste des artisans du jeu)
-  if has("GetNumGuildTradeSkill") then
-    local ok, n = pcall(GetNumGuildTradeSkill)
-    p.notes[#p.notes + 1] = "GetNumGuildTradeSkill : " .. tostring(n)
-    if ok and n and n > 0 and has("GetGuildTradeSkillInfo") then
-      for i = 1, math.min(n, 4) do
-        p.notes[#p.notes + 1] = "guilde " .. i .. " : " .. table.concat({ tostringall(GetGuildTradeSkillInfo(i)) }, ", ")
       end
     end
   end
-
-  BrowzForeverDB.probe = p
-  BF.Print(("Relevé enregistré (%d recette(s) d'exemple). Fais /reload pour que Claude puisse le lire."):format(#p.recipes))
-  if #p.recipes == 0 then BF.Print("|cffff5555Aucune recette lue :|r ouvre d'abord la fenêtre d'un métier, puis relance /browz testmetier.") end
+  table.sort(out, function(a, b)
+    if a.need ~= b.need then return a.need > b.need end
+    return a.name < b.name
+  end)
+  if q == "" then
+    -- haut du panier : pour chaque métier, les recettes à 25 points ou moins du plus haut niveau atteint
+    local top = {}
+    for _, r in ipairs(out) do top[r.prof] = math.max(top[r.prof] or 0, r.need) end
+    local filtered = {}
+    for _, r in ipairs(out) do if r.need >= (top[r.prof] or 0) - 25 then filtered[#filtered + 1] = r end end
+    out = filtered
+  end
+  while #out > limit do table.remove(out) end
+  return out
 end
 
--- Relevé n° 2 : exigences et source des recettes, artisans de la guilde (sans addon), « qui connaît cette recette »
-BF.commands["testmetier2"] = function()
-  local p = { t = GetServerTime(), recipes = {}, guild = {}, api = {}, notes = {} }
-  for _, f in ipairs({ "C_TradeSkillUI.GetRecipeSourceText", "C_TradeSkillUI.GetRecipeDescription",
-    "ExpandGuildTradeSkillHeader", "CollapseGuildTradeSkillHeader", "GetGuildRecipeInfoPostQuery",
-    "GetGuildRecipeMember", "C_GuildInfo.GetGuildRecipeMember", "C_TradeSkillUI.GetProfessionSkillLineID",
-    "C_TradeSkillUI.GetProfessionInfoByRecipeID" }) do p.api[f] = has(f) end
-  local okB, base = pcall(C_TradeSkillUI.GetBaseProfessionInfo)
-  local skillLine = okB and base and base.professionID
-  local ids = C_TradeSkillUI.GetAllRecipeIDs and C_TradeSkillUI.GetAllRecipeIDs() or {}
-  -- quelques recettes apprises et non apprises
-  local picked, nL, nU = {}, 0, 0
-  for _, id in ipairs(ids) do
-    local info = C_TradeSkillUI.GetRecipeInfo(id)
-    if info then
-      if info.learned and nL < 3 then nL = nL + 1; picked[#picked + 1] = id
-      elseif not info.learned and nU < 4 then nU = nU + 1; picked[#picked + 1] = id end
-    end
+-- Composants et stock dans la banque de guilde
+function Craft.Reagents(prof, id)
+  local L = Craft.Lib()
+  local list, stock = {}, {}
+  local b = BF.Bank and BF.Bank.Get and BF.Bank.Get()
+  for _, tab in pairs(b and b.tabs or {}) do
+    for iid, n in pairs(tab.items or {}) do stock[iid] = (stock[iid] or 0) + n end
   end
-  for _, id in ipairs(picked) do
-    local info = C_TradeSkillUI.GetRecipeInfo(id)
-    local r = { id = id, name = info.name, learned = info.learned, trivial = info.maxTrivialLevel, diff = info.relativeDifficulty }
-    local okR, req = pcall(C_TradeSkillUI.GetRecipeRequirements, id)
-    if okR and type(req) == "table" then
-      local parts = {}
-      for _, q in ipairs(req) do parts[#parts + 1] = keys(q) end
-      r.requirements = table.concat(parts, " || ")
-    end
-    if has("C_TradeSkillUI.GetRecipeSourceText") then
-      local okS, src = pcall(C_TradeSkillUI.GetRecipeSourceText, id)
-      r.source = okS and tostring(src) or "erreur"
-    end
-    p.recipes[#p.recipes + 1] = r
+  for iid, n in pairs(L and L:GetReagents(prof, id) or {}) do
+    list[#list + 1] = { id = iid, n = n, bank = stock[iid] or 0 }
   end
-  -- artisans de la guilde : on déplie tout
-  if has("GetNumGuildTradeSkill") then
-    if has("ExpandGuildTradeSkillHeader") then
-      for i = 1, GetNumGuildTradeSkill() do
-        local skillID, isCollapsed = GetGuildTradeSkillInfo(i)
-        if skillID and isCollapsed then pcall(ExpandGuildTradeSkillHeader, skillID) end
-      end
-    end
-    local n = GetNumGuildTradeSkill() or 0
-    p.notes[#p.notes + 1] = "lignes de métiers de guilde après dépliage : " .. n
-    for i = 1, math.min(n, 25) do
-      p.guild[#p.guild + 1] = table.concat({ tostringall(GetGuildTradeSkillInfo(i)) }, ", ")
-    end
-  end
-  BrowzForeverDB.probe2 = p
-  -- qui connaît une recette apprise (réponse du serveur, même pour les membres sans addon)
-  local learnedID
-  for _, id in ipairs(ids) do local i = C_TradeSkillUI.GetRecipeInfo(id); if i and i.learned then learnedID = id end end
-  if skillLine and learnedID and C_GuildInfo and C_GuildInfo.QueryGuildMembersForRecipe then
-    local ev = CreateFrame("Frame")
-    ev:RegisterEvent("GUILD_RECIPE_KNOWN_BY_MEMBERS")
-    ev:SetScript("OnEvent", function(self)
-      self:UnregisterAllEvents()
-      local q = { recipe = learnedID, skillLine = skillLine }
-      if has("GetGuildRecipeInfoPostQuery") then q.post = table.concat({ tostringall(GetGuildRecipeInfoPostQuery()) }, ", ") end
-      local getM = (C_GuildInfo and C_GuildInfo.GetGuildRecipeMember) or _G.GetGuildRecipeMember
-      if getM then
-        q.members = {}
-        for i = 1, 10 do
-          local ok, a, b = pcall(getM, i)
-          if not ok or a == nil then break end
-          q.members[#q.members + 1] = type(a) == "table" and keys(a) or (tostring(a) .. ", " .. tostring(b))
-        end
-      end
-      BrowzForeverDB.probe2.query = q
-      BF.Print("Réponse « qui connaît cette recette » reçue. Fais /reload pour que Claude puisse lire le relevé.")
-    end)
-    local ok, err = pcall(C_GuildInfo.QueryGuildMembersForRecipe, skillLine, learnedID)
-    p.notes[#p.notes + 1] = "QueryGuildMembersForRecipe(" .. skillLine .. ", " .. learnedID .. ") : " .. (ok and "envoyé" or tostring(err))
-    C_Timer.After(5, function()
-      if not BrowzForeverDB.probe2.query then BF.Print("Pas de réponse du serveur à « qui connaît cette recette ». Fais /reload.") end
-    end)
-  end
-  BF.Print(("Relevé 2 enregistré (%d recette(s), %d ligne(s) d'artisans). Attends 5 s puis /reload."):format(#p.recipes, #p.guild))
+  table.sort(list, function(a, b) return a.id < b.id end)
+  return list
 end
+
+BF.commands["recettes"] = function()
+  local c = crafters()[BF.MyName()]
+  if not c then BF.Print("Aucune recette enregistrée : ouvre tes métiers une fois."); return end
+  for prof, p in pairs(c.profs) do
+    local n = 0
+    for _ in (p.ids or ""):gmatch("%d+") do n = n + 1 end
+    BF.Print(("%s (%d) : %d recette(s) apprise(s) enregistrée(s)."):format(PROF_NAMES[prof] or prof, p.s or 0, n))
+  end
+end
+
+-- Onglet Craft ------------------------------------------------------------------------------------
+local panel = BF.CraftPanel
+if not panel then return end
+
+local LIST_W, ROW_H, ROWS = 300, 20, 12
+local selected, results = nil, {}
+
+local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+title:SetPoint("TOPLEFT", 20, -32); title:SetText("Recettes de la guilde")
+
+local search = CreateFrame("EditBox", nil, panel, "InputBoxTemplate")
+search:SetSize(LIST_W - 10, 20); search:SetPoint("TOPLEFT", 26, -56)
+search:SetAutoFocus(false)
+search.hint = search:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+search.hint:SetPoint("LEFT", 4, 0); search.hint:SetText("Rechercher une recette (ex. « rouage »)")
+
+local info = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+info:SetPoint("TOPLEFT", 20, -80); info:SetWidth(LIST_W); info:SetJustifyH("LEFT")
+
+local rows = {}
+for i = 1, ROWS do
+  local r = CreateFrame("Button", nil, panel)
+  r:SetSize(LIST_W, ROW_H)
+  r:SetPoint("TOPLEFT", 20, -96 - (i - 1) * ROW_H)
+  r:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+  r.sel = r:CreateTexture(nil, "BACKGROUND"); r.sel:SetAllPoints(); r.sel:SetColorTexture(1, 0.82, 0, 0.15); r.sel:Hide()
+  r.icon = r:CreateTexture(nil, "ARTWORK"); r.icon:SetSize(16, 16); r.icon:SetPoint("LEFT", 2, 0)
+  r.name = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+  r.name:SetPoint("LEFT", r.icon, "RIGHT", 4, 0); r.name:SetPoint("RIGHT", -64, 0); r.name:SetJustifyH("LEFT")
+  r.need = r:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall"); r.need:SetPoint("RIGHT", -30, 0)
+  r.count = r:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall"); r.count:SetPoint("RIGHT", -4, 0)
+  r:Hide()
+  rows[i] = r
+end
+
+local scroll = CreateFrame("Slider", nil, panel, "UIPanelScrollBarTemplate")
+scroll:SetPoint("TOPLEFT", rows[1], "TOPRIGHT", 4, -16)
+scroll:SetPoint("BOTTOMLEFT", rows[ROWS], "BOTTOMRIGHT", 4, 16)
+scroll:SetMinMaxValues(0, 0); scroll:SetValueStep(1); scroll:SetObeyStepOnDrag(true); scroll:SetValue(0)
+
+-- Détail à droite
+local DX = LIST_W + 48
+local dTitle = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+dTitle:SetPoint("TOPLEFT", DX, -58); dTitle:SetPoint("RIGHT", -16, 0); dTitle:SetJustifyH("LEFT")
+local dText = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+dText:SetPoint("TOPLEFT", dTitle, "BOTTOMLEFT", 0, -8); dText:SetPoint("RIGHT", -16, 0)
+dText:SetJustifyH("LEFT"); dText:SetJustifyV("TOP"); dText:SetSpacing(2)
+local craftBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+craftBtn:SetSize(170, 22); craftBtn:SetPoint("BOTTOMRIGHT", -16, 14)
+craftBtn:SetText("Demander ce craft"); craftBtn:Disable()
+craftBtn:SetMotionScriptsWhileDisabled(true)
+craftBtn:SetScript("OnEnter", function(self)
+  GameTooltip:SetOwner(self, "ANCHOR_TOP"); GameTooltip:SetText("Bientôt")
+  GameTooltip:AddLine("Les demandes de craft arrivent à l'étape suivante.", 1, 1, 1, true); GameTooltip:Show()
+end)
+craftBtn:SetScript("OnLeave", GameTooltip_Hide)
+
+local function itemName(iid)
+  local n = C_Item.GetItemInfo(iid)
+  if not n and C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(iid) end
+  return n or ("objet " .. iid)
+end
+
+local function short(name) return (name or ""):match("^[^-]+") or name end
+
+local function showDetail()
+  local r = selected
+  if not r then
+    dTitle:SetText("")
+    dText:SetText("|cffaaaaaaChoisis une recette dans la liste.\n\nSans recherche, seules les recettes de plus haut niveau " ..
+      "de chaque métier sont affichées : tape un nom pour trouver les autres.|r")
+    return
+  end
+  dTitle:SetText(r.name)
+  local lines = { ("%s · niveau %d"):format(PROF_NAMES[r.prof] or r.prof, r.need), "", "|cffffd100Artisans|r" }
+  for i, w in ipairs(r.who) do
+    if i > 8 then lines[#lines + 1] = ("… et %d autre(s)"):format(#r.who - 8); break end
+    local tag = w.kind == "addon" and "" or (w.kind == "suppose" and " |cff999999(supposé)|r" or " |cff999999(niveau inconnu)|r")
+    lines[#lines + 1] = ("%s%s%s"):format(short(w.name), w.s and (" · " .. w.s) or "", tag)
+  end
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = "|cffffd100Composants (en BDG)|r"
+  local all = true
+  for _, g in ipairs(Craft.Reagents(r.prof, r.id)) do
+    local ok = g.bank >= g.n
+    if not ok then all = false end
+    lines[#lines + 1] = ("%s%d × %s|r (%d)"):format(ok and "|cff33ff33" or "|cffff5555", g.n, itemName(g.id), g.bank)
+  end
+  lines[#lines + 1] = ""
+  lines[#lines + 1] = all and "|cff33ff33Tout est en BDG.|r" or "|cffff9933Il manque des composants en BDG.|r"
+  dText:SetText(table.concat(lines, "\n"))
+end
+
+local function refreshRows()
+  local L = Craft.Lib()
+  local off = math.floor(scroll:GetValue() + 0.5)
+  for i, row in ipairs(rows) do
+    local r = results[i + off]
+    row.r = r
+    if r then
+      local item = L and L:GetCraftedItemID(r.prof, r.id)
+      local icon = item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(item)
+      row.icon:SetTexture(icon or 134400)
+      row.name:SetText(r.name)
+      row.need:SetText(r.need)
+      row.count:SetText(#r.who)
+      row.sel:SetShown(selected ~= nil and selected.prof == r.prof and selected.id == r.id)
+      row:Show()
+    else row:Hide() end
+  end
+end
+
+function Craft.Refresh()
+  if not panel:IsShown() then return end
+  if not Craft.Lib() then
+    results = {}
+    info:SetText("|cffff5555L'addon « ProfessionDB » (LibProfessionDB) n'est pas installé ou pas activé.|r")
+    refreshRows(); showDetail(); return
+  end
+  results = Craft.Search(search:GetText())
+  scroll:SetMinMaxValues(0, math.max(0, #results - ROWS))
+  local q = strtrim(search:GetText() or "")
+  info:SetText(q == "" and ("%d recette(s) de plus haut niveau   (niveau · artisans)"):format(#results)
+    or ("%d recette(s) trouvée(s)   (niveau · artisans)"):format(#results))
+  refreshRows(); showDetail()
+end
+
+for _, row in ipairs(rows) do
+  row:SetScript("OnClick", function(self) selected = self.r; refreshRows(); showDetail() end)
+  row:SetScript("OnEnter", function(self)
+    local L = Craft.Lib()
+    local item = self.r and L and L:GetCraftedItemID(self.r.prof, self.r.id)
+    if item then GameTooltip:SetOwner(self, "ANCHOR_RIGHT"); GameTooltip:SetItemByID(item); GameTooltip:Show() end
+  end)
+  row:SetScript("OnLeave", GameTooltip_Hide)
+end
+scroll:SetScript("OnValueChanged", refreshRows)
+panel:EnableMouseWheel(true)
+panel:SetScript("OnMouseWheel", function(_, d) scroll:SetValue(scroll:GetValue() - d * 3) end)
+search:SetScript("OnTextChanged", function(self)
+  self.hint:SetShown(self:GetText() == "")
+  scroll:SetValue(0)
+  Craft.Refresh()
+end)
+search:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+search:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+panel:HookScript("OnShow", Craft.Refresh)
+Craft.OnChange(Craft.Refresh)
+if BF.Bank and BF.Bank.OnChange then BF.Bank.OnChange(Craft.Refresh) end
+local itemFrame = CreateFrame("Frame")
+itemFrame:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+local itemPending
+itemFrame:SetScript("OnEvent", function()
+  if itemPending or not panel:IsShown() then return end
+  itemPending = true
+  C_Timer.After(0.3, function() itemPending = false; showDetail() end)
+end)

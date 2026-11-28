@@ -6,7 +6,9 @@ Addon de la guilde **Browz Forever** (WoW Forever, Horde).
 
 1. Télécharge le dépôt : bouton vert **Code → Download ZIP**.
 2. Copie le dossier `addon/BrowzForever` dans `World of Warcraft\_forever_\Interface\AddOns\`.
-3. Relance le jeu, puis tape `/browz` (ou clique sur la pièce d'or près de la minimap).
+3. Installe aussi **LibProfessionDB** (CurseForge, addon « ProfessionDB » de Pimptasty) : c'est la base de recettes
+   de l'onglet Craft. Sans elle, tout le reste marche, seul l'onglet Craft reste vide.
+4. Relance le jeu, puis tape `/browz` (ou clique sur la pièce d'or près de la minimap, ou sur la macro « Browz BDG »).
 
 L'addon ne fait rien en dehors de la guilde Browz Forever.
 Pour le donner à un nouveau membre : onglet **Liaison → Lien de l'addon** (ou `/browz lien`), puis Ctrl+C.
@@ -17,7 +19,8 @@ Pour le donner à un nouveau membre : onglet **Liaison → Lien de l'addon** (ou
 - **Liaison** : tes métiers, tes personnages, ton pseudo Discord (Browzer te demandera de confirmer en message privé).
 - **Talents** et **équipement** : visibles sur le Discord de la guilde (`/browz inspect`).
 - **Demandes** : demande des objets de la banque avec une explication ; les officiers acceptent, l'addon retire les objets et prépare le courrier.
-- **Craft** : à venir.
+- **Banque (coffre)** : bouton **Ranger** à côté de la recherche du coffre (types d'onglet, fusion des piles, tri par familles).
+- **Craft** : qui sait fabriquer quoi dans la guilde, avec les composants déjà en banque (les demandes de craft arrivent).
 
 ## Pour les officiers : le pont
 
