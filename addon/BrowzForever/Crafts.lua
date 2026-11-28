@@ -33,8 +33,9 @@ local function guildProfs()
 end
 
 local listeners = {}
+local memo, memoAt = {}, 0          -- artisans par recette, recalculés seulement quand les données changent
 function Craft.OnChange(fn) listeners[#listeners + 1] = fn end
-local function changed() for _, fn in ipairs(listeners) do pcall(fn) end end
+local function changed() memo = {}; for _, fn in ipairs(listeners) do pcall(fn) end end
 
 -- Ensembles de recettes apprises (cache) ----------------------------------------------------------
 local setCache = {}
@@ -205,6 +206,15 @@ end
 
 -- Qui peut fabriquer une recette : liste triée (addon d'abord, puis supposés, puis « métier seulement »)
 function Craft.CraftersFor(prof, id)
+  if GetTime() - memoAt > 30 then memo, memoAt = {}, GetTime() end   -- les fiches reçues comptent au plus tard 30 s après
+  local key = prof .. ":" .. id
+  if memo[key] then return memo[key] end
+  local out = Craft.ComputeCrafters(prof, id)
+  memo[key] = out
+  return out
+end
+
+function Craft.ComputeCrafters(prof, id)
   local L = Craft.Lib()
   local out, seen = {}, {}
   for name in pairs(crafters()) do
@@ -499,10 +509,12 @@ end
 scroll:SetScript("OnValueChanged", refreshRows)
 view:EnableMouseWheel(true)
 view:SetScript("OnMouseWheel", function(_, d) scroll:SetValue(scroll:GetValue() - d * 3) end)
+local typing
 search:SetScript("OnTextChanged", function(self)
   self.hint:SetShown(self:GetText() == "")
-  scroll:SetValue(0)
-  Craft.Refresh()
+  -- on attend que la frappe se calme (0,3 s) avant de chercher : pas de calcul à chaque lettre
+  if typing then typing:Cancel() end
+  typing = C_Timer.NewTimer(0.3, function() typing = nil; scroll:SetValue(0); Craft.Refresh() end)
 end)
 search:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
 search:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
