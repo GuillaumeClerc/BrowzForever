@@ -206,7 +206,8 @@ local function stepMerge(tab)
           local src, dst = list[a], list[b]
           local key = tab .. ":" .. math.min(src, dst) .. ":" .. math.max(src, dst)
           if not job.failedMerge[key] and (job.failId[id] or 0) < 2 then
-            job.check = { tab = tab, slot = src, id = id, count = slots[src].count, key = key, kind = "fusion" }
+            job.check = { tab = tab, slot = src, id = id, count = slots[src].count, key = key, kind = "fusion",
+                          other = slots[dst].count, max = info(id).maxStack }
             move(tab, src, tab, dst)
             return true
           end
@@ -268,6 +269,10 @@ local function verify()
       -- refusée (piles d'autres royaumes) : après 2 refus pour un objet, on n'insiste plus (une erreur rouge à chaque fois)
       job.failedMerge[c.key] = true; job.refused = job.refused + 1
       job.failId[c.id] = (job.failId[c.id] or 0) + 1
+      if #job.refusedList < 6 then
+        job.refusedList[#job.refusedList + 1] = ("%s : %d + %d (pile max selon le jeu : %s)"):format(
+          info(c.id).sortName ~= "" and info(c.id).sortName or ("objet " .. c.id), c.count, c.other or 0, tostring(c.max))
+      end
     end
   elseif c.kind == "onglet" then
     if it and it.id == c.id then job.skip[c.tab .. ":" .. c.slot] = true; job.failed = job.failed + 1 end
@@ -310,8 +315,10 @@ local function step()
     local extra = {}
     if job.refused > 0 then extra[#extra + 1] = ("%d fusion(s) refusée(s) par le jeu (piles d'autres royaumes)"):format(job.refused) end
     if job.failed > 0 then extra[#extra + 1] = ("%d déplacement(s) refusé(s)"):format(job.failed) end
+    local list = job.refusedList
     stop(("|cff33ff33Coffre rangé|r (%d déplacement(s))%s."):format(job.moves,
       #extra > 0 and (" — " .. table.concat(extra, ", ")) or ""))
+    for _, line in ipairs(list) do BF.Print("  fusion refusée : " .. line) end
   end
 end
 
@@ -325,7 +332,7 @@ function Sort.Start()
   -- charge les infos des objets avant de trier (noms, types)
   for _, t in ipairs(tabs) do for _, it in pairs(readTab(t)) do info(it.id, it.link) end end
   job = { tabs = tabs, ti = 1, phase = "onglets", moves = 0, refused = 0, failed = 0,
-          skip = {}, tries = {}, failedMerge = {}, failId = {}, full = {}, startTab = GetCurrentGuildBankTab and GetCurrentGuildBankTab() }
+          skip = {}, tries = {}, refusedList = {}, failedMerge = {}, failId = {}, full = {}, startTab = GetCurrentGuildBankTab and GetCurrentGuildBankTab() }
   wipe(infoCache)                                -- relu proprement maintenant que les infos arrivent
   BF.Print(("Rangement du coffre (%d onglet(s))… clique à nouveau sur le bouton pour arrêter."):format(#tabs))
   if button then button:Update() end
